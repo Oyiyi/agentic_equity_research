@@ -1,0 +1,108 @@
+# FinRpt: Dataset, Evaluation System and LLM-based Multi-agent Framework for Equity Research Report Generation
+
+<div align="center">
+  
+  <a href="https://arxiv.org/abs/2511.07322">
+    <img src="https://img.shields.io/badge/ArXiv-FinRpt-brown?logo=arxiv" alt="Paper">
+  </a>
+  
+  <a href="https://huggingface.co/datasets/jinsong8/FinRpt">
+    <img src="https://img.shields.io/badge/🤗 huggingface-Dataset-blue" alt="dataset">
+  </a>
+  
+</div>
+
+>While LLMs have shown great success in financial tasks like stock prediction and question answering, their application in fully automating Equity Research Report generation remains uncharted territory. In this paper, we formulate the Equity Research Report (ERR) Generation task for the first time. To address the data scarcity and the evaluation metrics absence, we present an open-source evaluation benchmark for ERR generation - FinRpt. We frame a Dataset Construction Pipeline that integrates 7 financial data types and produces a high-quality ERR dataset automatically, which could be used for model training and evaluation. We also introduce a comprehensive evaluation system including 11 metrics to assess the generated ERRs. Moreover, we propose a multi-agent framework specifically tailored to address this task, named FinRpt-Gen, and train several LLM-based agents on the proposed datasets using Supervised Fine-Tuning and Reinforcement Learning. Experimental results indicate the data quality and metrics effectiveness of the benchmark FinRpt and the strong performance of FinRpt-Gen, showcasing their potential to drive innovation in the ERR generation field. All code and datasets are publicly available. 
+
+
+## 🕹️ Environment Setup
+
+1. Create a new virtual environment
+```
+conda create --name finrpt python=3.10
+conda activate finrpt
+```
+2. Install requirement packages
+
+```
+pip install -r requirements.txt
+```
+3. Add Python environment variables
+```
+export PYTHONPATH="${PYTHONPATH}:<path_to_this_repo>"
+```
+
+
+## 🔧 Structure
+
+### Dataset Construction Pipeline
+<div align="center">
+<img align="center" src="assets/pipeline.png" width="90%"/>
+</div>
+
+The corresponding code is in
+```
+FinRpt/dataset
+```
+
+### Data Collection Module
+
+The corresponding code is in
+```
+FinRpt/finrpt/source
+```
+
+### FinRpt Framework
+<div align="center">
+<img align="center" src="assets/agent.png" width="35.92%"/>
+</div>
+
+The corresponding code is in
+```
+FinRpt/finrpt/module
+```
+
+### Benchmark Evaluation
+
+The corresponding code is in
+```
+FinRpt/finrpt/benchmark
+```
+
+### Fine-tuning LLMs
+
+We use LLaMA-Factory repo to fine-tune LLMs. 
+
+The corresponding code is in
+
+```
+FinRpt/finetune/LLaMA-Factory
+```
+
+###  Reinforcement Learning
+We use [verl](https://github.com/volcengine/verl) source code for reinforcement learning.
+
+### Website front-end code for FinRpt
+
+You can use the code to build the website for FinRpt and use the website to generate the ERRs conveniently.
+
+The corresponding code is in
+```
+FinRpt/front
+```
+
+## 🧩 Generated Report Case
+The report case generated using FinRpt-Gen (translated from Chinese into English).
+
+<div align="center">
+<img align="center" src="assets/report.png" width="90%"/>
+</div>
+
+## 🌹 Acknowledgmentsons
+
+This project use [LLaMA-Factory](https://github.com/hiyouga/LLaMA-Factory) for mdoels fine-tuning, [verl](https://github.com/volcengine/verl) for reinforcement learning, and [ReportLab](https://www.reportlab.com/) for PDF report generation. Special thanks for providing the foundation for this work.
+
+## 📚 License
+MIT License
+
+Disclaimer: We are sharing codes for academic purposes under the MIT education license. Nothing herein is financial advice, and NOT a recommendation to trade real money. Please use common sense and always first consult a professional before trading or investing.
