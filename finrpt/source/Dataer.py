@@ -15,6 +15,10 @@ import pickle
 import json
 import pytz
 import pdb
+import os
+
+# Rate limiting for yfinance API calls to avoid 429 errors
+YFINANCE_API_DELAY = float(os.getenv('YFINANCE_API_DELAY', '1.0'))  # seconds between calls
 
 from finrpt.source.database_init import (
     company_info_table_init, 
@@ -32,6 +36,22 @@ from finrpt.source.database_insert import (
 )
     
 from finrpt.source.database_query import company_news_table_query_by_url, announcement_table_query_by_url
+
+def is_us_stock(stock_code):
+    """Check if stock_code is a US stock (e.g., AAPL, MSFT) vs Chinese stock (e.g., 600519.SS)
+    
+    Args:
+        stock_code: Stock code string
+        
+    Returns:
+        bool: True if US stock, False if Chinese stock
+    """
+    if not stock_code:
+        return False
+    # Chinese stocks have format like 600519.SS, 002594.SZ (ends with .SS or .SZ)
+    # US stocks are simple tickers like AAPL, MSFT, GOOGL
+    return not (stock_code.endswith('.SS') or stock_code.endswith('.SZ') or 
+                (len(stock_code) >= 6 and stock_code[:6].isdigit()))
 
 class Dataer:
     def __init__(self, max_retry=1, database_name = '/data/name/FinRpt_v1/finrpt/source/cache.db', model_name = 'gpt-4o-mini'):
@@ -645,24 +665,63 @@ class Dataer:
         return result
     
     def get_finacncials_yf(self, stock_code, end_date, start_date=None):
+        """Get financials data using yfinance (for US stocks)
+        
+        Args:
+            stock_code: US stock ticker (e.g., 'AAPL', 'MSFT')
+            end_date: End date in 'YYYY-MM-DD' format
+            start_date: Start date in 'YYYY-MM-DD' format (optional)
+            
+        Returns:
+            dict: Dictionary containing financial data
+        """
+        # Set yfinance API token if available
+        yf_token = os.getenv('YFINANCE_API_TOKEN')
+        if yf_token and yf_token != 'your_yfinance_api_token_here':
+            # Note: yfinance doesn't directly support API tokens in current version
+            # This is a placeholder for future use
+            pass
+            
         if not start_date:
             start_date = datetime.strptime(end_date, "%Y-%m-%d") - relativedelta(months=3)
             start_date = start_date.strftime("%Y-%m-%d")
+        
         ticker = yf.Ticker(stock_code)
+        time.sleep(YFINANCE_API_DELAY)  # Rate limiting
         stock_info = ticker.info
+        
+        # Get historical price data (comparable to CSI300 for Chinese stocks)
+        # For US stocks, we'll use SPY (S&P 500 ETF) as benchmark
+        time.sleep(YFINANCE_API_DELAY)  # Rate limiting
         stock_data = ticker.history(start=start_date, end=end_date)
+        
+        spy_ticker = yf.Ticker("SPY")
+        time.sleep(YFINANCE_API_DELAY)  # Rate limiting
+        sp500_stock_data = spy_ticker.history(start=start_date, end=end_date)
+        
+        # Get financial statements
+        time.sleep(YFINANCE_API_DELAY)  # Rate limiting
         stock_income = ticker.quarterly_income_stmt
-        stock_income = stock_income.loc[:, stock_income.columns <= pd.to_datetime(end_date)]
+        if stock_income is not None and not stock_income.empty:
+            stock_income = stock_income.loc[:, stock_income.columns <= pd.to_datetime(end_date)]
+        
+        time.sleep(YFINANCE_API_DELAY)  # Rate limiting
         stock_balance_sheet = ticker.quarterly_balance_sheet
-        stock_balance_sheet = stock_balance_sheet.loc[:, stock_balance_sheet.columns <= pd.to_datetime(end_date)]
+        if stock_balance_sheet is not None and not stock_balance_sheet.empty:
+            stock_balance_sheet = stock_balance_sheet.loc[:, stock_balance_sheet.columns <= pd.to_datetime(end_date)]
+        
+        time.sleep(YFINANCE_API_DELAY)  # Rate limiting
         stock_cash_flow = ticker.quarterly_cashflow
-        stock_cash_flow = stock_cash_flow.loc[:, stock_cash_flow.columns <= pd.to_datetime(end_date)]
+        if stock_cash_flow is not None and not stock_cash_flow.empty:
+            stock_cash_flow = stock_cash_flow.loc[:, stock_cash_flow.columns <= pd.to_datetime(end_date)]
+        
         result = {
             "stock_info": stock_info,
             "stock_data": stock_data,
-            "stock_income": stock_income,
-            "stock_balance_sheet": stock_balance_sheet,
-            "stock_cash_flow": stock_cash_flow
+            "stock_income": stock_income if stock_income is not None else pd.DataFrame(),
+            "stock_balance_sheet": stock_balance_sheet if stock_balance_sheet is not None else pd.DataFrame(),
+            "stock_cash_flow": stock_cash_flow if stock_cash_flow is not None else pd.DataFrame(),
+            "sp500_stock_data": sp500_stock_data  # For US stocks, use SPY as benchmark (similar to CSI300)
         }
         return result
     
@@ -671,7 +730,13 @@ class Dataer:
         if not start_date:
             start_date = datetime.strptime(end_date, "%Y-%m-%d") - relativedelta(months=1)
             start_date = start_date.strftime("%Y-%m-%d")
-            
+        
+        # Check if US stock - use yfinance for US stocks, akshare for Chinese stocks
+        if is_us_stock(stock_code):
+            # Use yfinance for US stocks
+            return self.get_finacncials_yf(stock_code, end_date, start_date)
+        
+        # Original akshare logic for Chinese stocks
         # for report generate
         # try:
         #     conn = sqlite3.connect(self.database_name)

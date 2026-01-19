@@ -11,6 +11,26 @@ from matplotlib.ticker import FuncFormatter
 import yfinance as yf
 import numpy as np
 import pdb
+import time
+
+# Rate limiting for yfinance API calls
+YFINANCE_API_DELAY = float(os.getenv('YFINANCE_API_DELAY', '1.0'))  # seconds between calls
+
+def is_us_stock(stock_code):
+    """Check if stock_code is a US stock (e.g., AAPL, MSFT) vs Chinese stock (e.g., 600519.SS)
+    
+    Args:
+        stock_code: Stock code string
+        
+    Returns:
+        bool: True if US stock, False if Chinese stock
+    """
+    if not stock_code:
+        return False
+    # Chinese stocks have format like 600519.SS, 002594.SZ (ends with .SS or .SZ)
+    # US stocks are simple tickers like AAPL, MSFT, GOOGL
+    return not (stock_code.endswith('.SS') or stock_code.endswith('.SZ') or 
+                (len(stock_code) >= 6 and stock_code[:6].isdigit()))
 
 
 def get_share_performance(
@@ -27,6 +47,7 @@ def get_share_performance(
         start = (filing_date - timedelta(days=365)).strftime("%Y-%m-%d")
         end = filing_date.strftime("%Y-%m-%d")
         try:
+            time.sleep(YFINANCE_API_DELAY)  # Rate limiting
             ticker_obj = yf.Ticker(ticker)
             historical_data = ticker_obj.history(start=start, end=end)
             if historical_data.empty or "Close" not in historical_data.columns:
@@ -42,7 +63,16 @@ def get_share_performance(
         return ticker.info
 
     target_close = fetch_stock_data(stock_code)
-    csi300_close = fetch_stock_data("000300.SS")
+    
+    # Use SPY (S&P 500) for US stocks, CSI300 for Chinese stocks
+    if is_us_stock(stock_code):
+        benchmark_ticker = "SPY"
+        benchmark_label = "S&P 500"
+    else:
+        benchmark_ticker = "000300.SS"
+        benchmark_label = "沪深300"
+    
+    benchmark_close = fetch_stock_data(benchmark_ticker)
     
     # Handle empty data gracefully
     if target_close is None or len(target_close) == 0:
@@ -54,22 +84,22 @@ def get_share_performance(
             (target_close - target_close.iloc[0]) / target_close.iloc[0] * 100
         )
     
-    if csi300_close is None or len(csi300_close) == 0:
-        print("Warning: No CSI300 data available, creating empty chart")
-        csi300_close = pd.Series(dtype=float)
-        csi300_change = pd.Series(dtype=float)
+    if benchmark_close is None or len(benchmark_close) == 0:
+        print(f"Warning: No {benchmark_label} data available, creating empty chart")
+        benchmark_close = pd.Series(dtype=float)
+        benchmark_change = pd.Series(dtype=float)
     else:
-        csi300_change = (csi300_close - csi300_close.iloc[0]) / csi300_close.iloc[0] * 100
+        benchmark_change = (benchmark_close - benchmark_close.iloc[0]) / benchmark_close.iloc[0] * 100
 
     plt.figure(figsize=(10, 6))
     # Only plot if we have data
     if len(company_change) > 0:
         plt.plot(company_change.index, company_change, label=data["company_name"], color='#9E1F00', linewidth=6)
-    if len(csi300_change) > 0:
-        plt.plot(csi300_change.index, csi300_change, label='沪深300', color='#d45716', linewidth=6)
+    if len(benchmark_change) > 0:
+        plt.plot(benchmark_change.index, benchmark_change, label=benchmark_label, color='#d45716', linewidth=6)
 
     # Only show legend if we have data to plot
-    if len(company_change) > 0 or len(csi300_change) > 0:
+    if len(company_change) > 0 or len(benchmark_change) > 0:
         plt.legend(loc='upper center', bbox_to_anchor=(0.5, -0.1), ncol=2, fontsize=22, handlelength=5, frameon=False, labelcolor='#6a6a6a')
     else:
         # Create empty plot with message
@@ -149,6 +179,7 @@ def get_pe_eps_performance(
     start = (filing_date - timedelta(days=days)).strftime("%Y-%m-%d")
     end = filing_date.strftime("%Y-%m-%d")
     try:
+        time.sleep(YFINANCE_API_DELAY)  # Rate limiting
         historical_data = yf.Ticker(stock_code).history(start=start, end=end)
         if historical_data.empty:
             print(f"Warning: No historical price data available for {stock_code}, creating empty chart")

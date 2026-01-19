@@ -1,0 +1,169 @@
+# # config.yaml
+version: "1.0"
+
+inputs:
+  source_report:
+    provider: "Morgan Stanley"
+    type: "equity_research_pdf"
+    file: "Modified-TSLA-Report 2.pdf"
+    report_date: "2025-01-30"
+    ticker: "TSLA"
+
+brand:
+  name: "Morgan Stanley"
+  # Colors approximated from the MS PDF’s visible accent palette (dominant blues + neutral greys).
+  # If you need exact brand-legal values, provide MS brand guidelines.
+  colors:
+    primary:
+      name: "MS Blue"
+      hex: "#0060A0"
+      rgb: [0, 96, 160]
+    secondary:
+      name: "Light Blue"
+      hex: "#1090D0"
+      rgb: [16, 144, 208]
+    accent:
+      name: "Warm Gold"
+      hex: "#D0B060"
+      rgb: [208, 176, 96]
+    neutrals:
+      black:
+        hex: "#111111"
+      dark_grey:
+        hex: "#4A4A4A"
+      mid_grey:
+        hex: "#7A7A7A"
+      light_grey:
+        hex: "#E6E6E6"
+      white:
+        hex: "#FFFFFF"
+
+typography:
+  # Fonts detected from the MS PDF’s embedded fonts.
+  # Provide fallbacks in case the exact fonts aren’t available in the render environment.
+  primary_family:
+    name: "MSGloriolaIIStd"
+    fallbacks: ["Georgia", "Times New Roman", "serif"]
+  secondary_family:
+    name: "Roboto"
+    fallbacks: ["Arial", "Helvetica", "sans-serif"]
+
+  scale:
+    h1:
+      font_family: "MSGloriolaIIStd"
+      font_weight: 300   # Light
+      font_size_pt: 24
+      line_height: 1.15
+      color: "#111111"
+    h2:
+      font_family: "MSGloriolaIIStd"
+      font_weight: 500   # Medium
+      font_size_pt: 14
+      line_height: 1.2
+      color: "#111111"
+    body:
+      font_family: "MSGloriolaIIStd"
+      font_weight: 400
+      font_size_pt: 9
+      line_height: 1.35
+      color: "#111111"
+    caption:
+      font_family: "Roboto"
+      font_weight: 300
+      font_size_pt: 8
+      line_height: 1.25
+      color: "#4A4A4A"
+
+layout:
+  page:
+    size: "LETTER"
+    orientation: "portrait"
+    margins_in: { top: 0.6, right: 0.65, bottom: 0.6, left: 0.65 }
+    grid:
+      columns: 2
+      gutter_in: 0.35
+
+  header:
+    show: true
+    left_text: "Morgan Stanley | Research"
+    right_text: "M Global Insight"
+    font_family: "Roboto"
+    font_size_pt: 8
+    color: "#4A4A4A"
+    divider:
+      show: true
+      thickness_pt: 0.75
+      color: "#E6E6E6"
+
+  footer:
+    show: true
+    left_text_template: "{provider} Research"
+    right_text_template: "{page_number}"
+    font_family: "Roboto"
+    font_size_pt: 7
+    color: "#7A7A7A"
+
+components:
+  title_block:
+    title_font: { family: "MSGloriolaIIStd", weight: 300, size_pt: 24, color: "#111111" }
+    subtitle_font: { family: "MSGloriolaIIStd", weight: 500, size_pt: 12, color: "#4A4A4A" }
+    meta_font: { family: "Roboto", weight: 300, size_pt: 8, color: "#7A7A7A" }
+    meta_fields:
+      - "report_date"
+      - "provider"
+      - "analyst_names"
+
+  section_heading:
+    rule:
+      show: true
+      thickness_pt: 1.0
+      color: "#E6E6E6"
+    text:
+      font_family: "MSGloriolaIIStd"
+      font_weight: 500
+      font_size_pt: 14
+      color: "#111111"
+
+  chart_style:
+    palette:
+      - "#0060A0"
+      - "#1090D0"
+      - "#D0B060"
+      - "#4A4A4A"
+      - "#7A7A7A"
+    axis:
+      font_family: "Roboto"
+      font_size_pt: 8
+      color: "#4A4A4A"
+    gridlines:
+      color: "#E6E6E6"
+      thickness_pt: 0.5
+    legend:
+      font_family: "Roboto"
+      font_size_pt: 8
+      color: "#4A4A4A"
+
+  table_style:
+    header:
+      fill: "#0060A0"
+      text_color: "#FFFFFF"
+      font_family: "Roboto"
+      font_weight: 700
+      font_size_pt: 8
+    body:
+      font_family: "Roboto"
+      font_weight: 300
+      font_size_pt: 8
+      text_color: "#111111"
+      zebra_stripes: true
+      stripe_fill: "#F5F5F5"
+    borders:
+      color: "#E6E6E6"
+      thickness_pt: 0.5
+
+render:
+  output_name_template: "{ticker}_MS-styled_{report_date}.pdf"
+  preserve_source_content: true
+  rewrite_headings_to_style: true
+  normalize_tables: true
+  normalize_charts: true
