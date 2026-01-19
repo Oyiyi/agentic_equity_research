@@ -1003,7 +1003,10 @@ def pull_key_metrics(
     db_path: str = None,
     market_cap: float = None,
     shares_outstanding: float = None,
-    current_price: float = None
+    current_price: float = None,
+    use_openai_forecast: bool = True,
+    model_name: str = None,
+    temperature: float = 0.3
 ) -> Optional[Dict]:
     """
     Pull key metrics data for a ticker (with caching and forecasting).
@@ -1014,6 +1017,9 @@ def pull_key_metrics(
         market_cap: Current market cap (for valuation metrics)
         shares_outstanding: Current shares outstanding
         current_price: Current stock price
+        use_openai_forecast: If True, use OpenAI-based forecasting (default: True)
+        model_name: OpenAI model name (only used if use_openai_forecast=True)
+        temperature: Temperature for OpenAI generation (only used if use_openai_forecast=True)
         
     Returns:
         Dictionary with metrics for past 2 years and forecast for next year
@@ -1028,6 +1034,56 @@ def pull_key_metrics(
     cached = check_key_metrics_cache(ticker, db_path)
     if cached:
         print("Using cached key metrics data")
+        # If using OpenAI forecast and forecasts don't exist, generate them
+        if use_openai_forecast:
+            # Determine latest actual year from cached data
+            # We need to identify which years are actual (from API) vs forecast
+            # Strategy: Fetch fresh data from API to see what the latest actual year is
+            # Then compare with cache to see if forecasts are needed
+            print("Checking if forecasts need to be generated...")
+            income_statements, balance_sheets, cash_flows = fetch_financial_statements_fmp(
+                ticker, FMP_API_KEY, period='annual', limit=3
+            )
+            
+            if income_statements and balance_sheets and cash_flows:
+                # Calculate metrics to get actual years from API
+                temp_metrics = calculate_key_metrics(
+                    income_statements, balance_sheets, cash_flows,
+                    market_cap, shares_outstanding, current_price
+                )
+                actual_years_from_api = sorted(temp_metrics.keys(), reverse=True, key=int)
+                
+                if len(actual_years_from_api) >= 2:
+                    latest_actual_year = actual_years_from_api[0]  # Most recent actual year from API
+                    forecast_year_1 = str(int(latest_actual_year) + 1)
+                    forecast_year_2 = str(int(latest_actual_year) + 2)
+                    
+                    print(f"Latest actual fiscal year from API: {latest_actual_year}")
+                    print(f"Forecast years needed: {forecast_year_1}, {forecast_year_2}")
+                    
+                    # Check if forecasts exist in cache
+                    if forecast_year_1 not in cached or forecast_year_2 not in cached:
+                        print("Generating missing forecasts using OpenAI...")
+                        try:
+                            from agentic.financial_forecastor import generate_forecast_for_years
+                            forecasts = generate_forecast_for_years(
+                                ticker=ticker,
+                                latest_actual_year=latest_actual_year,
+                                forecast_years=[forecast_year_1, forecast_year_2],
+                                db_path=db_path,
+                                model_name=model_name,
+                                temperature=temperature,
+                                force_regenerate=False
+                            )
+                            if forecasts:
+                                cached.update(forecasts)
+                                save_key_metrics(db_path, ticker, cached)
+                                print("Forecasts generated and saved to cache")
+                        except Exception as e:
+                            print(f"Warning: Could not generate OpenAI forecasts: {e}")
+                            print("Falling back to simple forecast method")
+                            import traceback
+                            traceback.print_exc()
         return cached
     
     # Fetch from API
@@ -1047,51 +1103,109 @@ def pull_key_metrics(
     )
     
     # Get actual years from API (sorted, most recent first)
+    # These are the actual fiscal years from financial statements
     actual_years = sorted(metrics.keys(), reverse=True, key=int)
     
     if len(actual_years) < 2:
         print("Not enough actual years of data")
         return metrics
     
-    # Determine latest complete fiscal year
-    # Since we're pulling annual data, the most recent should be the latest complete year
+    # Determine latest complete fiscal year from financial statements
+    # The most recent year in the API data is the latest actual fiscal year
     latest_actual_year = actual_years[0]
     previous_actual_year = actual_years[1]
     
-    # Get current year to determine what to forecast
-    from datetime import datetime
-    current_calendar_year = int(datetime.now().strftime('%Y'))
+    # Calculate forecast years: next 2 fiscal years after latest actual
+    forecast_year_1 = str(int(latest_actual_year) + 1)
+    forecast_year_2 = str(int(latest_actual_year) + 2)
     
-    # Determine forecast years
-    # If latest actual year is current_year - 1, then current_year and next_year are forecasts
-    # If latest actual year is current_year, then next_year is forecast
+    print(f"Latest actual fiscal year: {latest_actual_year}")
+    print(f"Previous actual fiscal year: {previous_actual_year}")
+    print(f"Forecast years needed: {forecast_year_1}, {forecast_year_2}")
+    
+    # Store only actual data first
     result = {
         previous_actual_year: metrics[previous_actual_year],  # 2 years ago (actual)
         latest_actual_year: metrics[latest_actual_year],  # Latest year (actual)
     }
     
-    # Add forecasts
-    forecast_year_1 = str(int(latest_actual_year) + 1)
-    forecast_year_2 = str(int(latest_actual_year) + 2)
+    # Save actual data first so forecast function can access it
+    save_key_metrics(db_path, ticker, result)
+    print("Actual key metrics data saved to cache")
     
-    # Only add forecast_year_1 if it's not already in actual data
-    if forecast_year_1 not in metrics:
+    # Generate forecasts using OpenAI if requested, otherwise use simple method
+    if use_openai_forecast:
+        try:
+            from agentic.financial_forecastor import generate_forecast_for_years
+            print(f"Generating forecasts using OpenAI for {ticker}...")
+            print(f"  Latest actual fiscal year: {latest_actual_year}")
+            print(f"  Forecasting fiscal years: {forecast_year_1}, {forecast_year_2}")
+            
+            # Generate forecasts for the specific years needed
+            forecasts = generate_forecast_for_years(
+                ticker=ticker,
+                latest_actual_year=latest_actual_year,
+                forecast_years=[forecast_year_1, forecast_year_2],
+                db_path=db_path,
+                model_name=model_name,
+                temperature=temperature,
+                force_regenerate=False
+            )
+            
+            if forecasts:
+                if forecast_year_1 in forecasts:
+                    result[forecast_year_1] = forecasts[forecast_year_1]
+                    print(f"Forecast for FY{forecast_year_1[-2:]} generated successfully")
+                if forecast_year_2 in forecasts:
+                    result[forecast_year_2] = forecasts[forecast_year_2]
+                    print(f"Forecast for FY{forecast_year_2[-2:]} generated successfully")
+            else:
+                print("Warning: OpenAI forecast failed, using simple method")
+                # Fall back to simple forecast
+                forecast_1 = forecast_next_fiscal_year(
+                    metrics[latest_actual_year],
+                    metrics.get(previous_actual_year)
+                )
+                result[forecast_year_1] = forecast_1
+                
+                forecast_2 = forecast_next_fiscal_year(
+                    result.get(forecast_year_1, metrics[latest_actual_year]),
+                    metrics[latest_actual_year]
+                )
+                result[forecast_year_2] = forecast_2
+            
+        except Exception as e:
+            print(f"Warning: OpenAI forecast failed: {e}")
+            print("Falling back to simple forecast method")
+            # Fall back to simple forecast
+            forecast_1 = forecast_next_fiscal_year(
+                metrics[latest_actual_year],
+                metrics.get(previous_actual_year)
+            )
+            result[forecast_year_1] = forecast_1
+            
+            forecast_2 = forecast_next_fiscal_year(
+                result.get(forecast_year_1, metrics[latest_actual_year]),
+                metrics[latest_actual_year]
+            )
+            result[forecast_year_2] = forecast_2
+    else:
+        # Use simple forecast method
         forecast_1 = forecast_next_fiscal_year(
             metrics[latest_actual_year],
             metrics.get(previous_actual_year)
         )
         result[forecast_year_1] = forecast_1
+        
+        forecast_2 = forecast_next_fiscal_year(
+            result.get(forecast_year_1, metrics[latest_actual_year]),
+            metrics[latest_actual_year]
+        )
+        result[forecast_year_2] = forecast_2
     
-    # Add second forecast year
-    forecast_2 = forecast_next_fiscal_year(
-        result.get(forecast_year_1, metrics[latest_actual_year]),
-        metrics[latest_actual_year]
-    )
-    result[forecast_year_2] = forecast_2
-    
-    # Save to cache
+    # Save to cache with forecasts
     save_key_metrics(db_path, ticker, result)
-    print("Key metrics data saved to cache")
+    print("Key metrics data with forecasts saved to cache")
     
     return result
 
@@ -1102,7 +1216,10 @@ def pull_tesla_data(
     end_date: str = None,
     start_date: str = None,
     as_of_date: str = None,
-    db_path: str = None
+    db_path: str = None,
+    use_openai_forecast: bool = True,
+    model_name: str = None,
+    temperature: float = 0.3
 ) -> Dict:
     """
     Main function to pull data for Tesla (or any ticker).
@@ -1198,7 +1315,10 @@ def pull_tesla_data(
     # Fetch S3: Key Metrics
     print(f"Fetching key metrics for {ticker}...")
     key_metrics = pull_key_metrics(
-        ticker, db_path, market_cap, shares_outstanding, current_price
+        ticker, db_path, market_cap, shares_outstanding, current_price,
+        use_openai_forecast=use_openai_forecast,
+        model_name=model_name,
+        temperature=temperature
     )
     result['key_metrics'] = key_metrics
     

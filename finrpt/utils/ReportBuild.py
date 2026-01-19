@@ -1,6 +1,6 @@
 from reportlab.pdfgen import canvas
 from reportlab.platypus import Image, Table, TableStyle, Spacer
-from reportlab.lib.pagesizes import A4
+from reportlab.lib.pagesizes import A4, LETTER
 from reportlab.lib.colors import Color
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
@@ -16,6 +16,7 @@ import pickle
 import os
 import pdb
 import json
+import yaml
 
 
 FINE2C = {
@@ -89,6 +90,62 @@ BASE_key_mapping = {
     'Closing Price (CNY)': '收盘价(元)',
     '52 Week Price Range (CNY)': '52周价格范围(元)'
 }
+
+
+def load_config(config_path='config.yaml'):
+    """Load configuration from YAML file"""
+    config_paths = [
+        config_path,
+        os.path.join(os.path.dirname(__file__), '..', '..', config_path),
+        os.path.join(os.getcwd(), config_path)
+    ]
+    
+    for path in config_paths:
+        if os.path.exists(path):
+            with open(path, 'r', encoding='utf-8') as f:
+                return yaml.safe_load(f)
+    
+    print(f"Warning: Config file not found, using default values")
+    return None
+
+
+def hex_to_color(hex_color):
+    """Convert hex color string to ReportLab Color object"""
+    hex_color = hex_color.lstrip('#')
+    if len(hex_color) == 6:
+        r = int(hex_color[0:2], 16) / 255.0
+        g = int(hex_color[2:4], 16) / 255.0
+        b = int(hex_color[4:6], 16) / 255.0
+        return Color(r, g, b)
+    return colors.black
+
+
+def get_font_name(config, font_key='primary_family'):
+    """Get font name from config with fallback"""
+    if not config or 'typography' not in config:
+        return 'Helvetica'
+    
+    typo = config['typography']
+    if font_key in typo:
+        font_info = typo[font_key]
+        if isinstance(font_info, dict) and 'name' in font_info:
+            return font_info['name']
+        elif isinstance(font_info, str):
+            return font_info
+    return 'Helvetica'
+
+
+def get_page_size(config):
+    """Get page size from config"""
+    if not config or 'layout' not in config or 'page' not in config['layout']:
+        return A4
+    
+    page_config = config['layout']['page']
+    size = page_config.get('size', 'A4')
+    
+    if size.upper() == 'LETTER':
+        return LETTER
+    return A4
 
 
 def get_next_weekday(date):
@@ -231,18 +288,30 @@ def get_key_data(ticker_symbol, filing_date):
 
 
 class BulletParagraph(Flowable):
-    def __init__(self, icon_path, text, font_name):
+    def __init__(self, icon_path, text, font_name, config=None):
         Flowable.__init__(self)
         self.icon_path = icon_path
         styles = getSampleStyleSheet()
+        
+        # Get body text style from config
+        if config and 'typography' in config and 'scale' in config['typography']:
+            body_style = config['typography']['scale'].get('body', {})
+            font_size = body_style.get('font_size_pt', 10)
+            line_height = body_style.get('line_height', 1.35)
+            text_color = hex_to_color(body_style.get('color', '#111111'))
+        else:
+            font_size = 10
+            line_height = 1.35
+            text_color = colors.black
+        
         custom_style = ParagraphStyle(
             'CustomStyle',
             parent=styles['Normal'],
             fontName=font_name,  
-            fontSize=10,
-            leading=14,
+            fontSize=font_size,
+            leading=font_size * line_height,
             spaceAfter=12,
-            textColor=colors.black,
+            textColor=text_color,
             alignment=0  
         )
         self.paragraph = Paragraph(text, custom_style)
@@ -259,30 +328,56 @@ class BulletParagraph(Flowable):
         self.icon.drawOn(self.canv, 0, self.height - self.icon.drawHeight - 3)
         self.paragraph.drawOn(self.canv, self.icon.drawWidth + 6, 0)
  
-def draw_frame_title(text, set_color, col_width, font_name):
+def draw_frame_title(text, set_color, col_width, font_name, config=None):
     data = [[text]]
     table = Table(data, colWidths=col_width)
+    
+    # Get table header style from config
+    if config and 'components' in config and 'table_style' in config['components']:
+        header_style = config['components']['table_style'].get('header', {})
+        header_font = header_style.get('font_family', font_name)
+        header_size = header_style.get('font_size_pt', 12)
+        header_weight = header_style.get('font_weight', 700)
+        text_color = hex_to_color(header_style.get('text_color', '#FFFFFF'))
+    else:
+        header_font = font_name
+        header_size = 12
+        header_weight = 700
+        text_color = colors.white
+    
     table.setStyle(TableStyle([
         ('BACKGROUND', (0, 0), (-1, -1), set_color),
-        ('TEXTCOLOR', (0, 0), (-1, -1), colors.white),
+        ('TEXTCOLOR', (0, 0), (-1, -1), text_color),
         ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
         ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-        ('FONTSIZE', (0, 0), (-1, -1), 12),
+        ('FONTSIZE', (0, 0), (-1, -1), header_size),
+        ('FONTNAME', (0, 0), (-1, -1), header_font),
         ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
         ('TOPPADDING', (0, 0), (-1, -1), 3),
-        ('FONTNAME', (0, 0), (-1, -1), font_name),
     ]))
     return table
 
-def get_base_table(font_name, data):
+def get_base_table(font_name, data, config=None):
     styles = getSampleStyleSheet()
+    
+    # Get body text style from config
+    if config and 'typography' in config and 'scale' in config['typography']:
+        body_style = config['typography']['scale'].get('body', {})
+        font_size = body_style.get('font_size_pt', 9)
+        text_color = hex_to_color(body_style.get('color', '#111111'))
+    else:
+        font_size = 9
+        text_color = colors.black
+    
     style_left = styles['Normal']
     style_left.fontName = font_name
-    style_left.fontSize = 9
+    style_left.fontSize = font_size
+    style_left.textColor = text_color
 
     style_right = styles['Normal']
     style_right.fontName = font_name
-    style_right.fontSize = 9
+    style_right.fontSize = font_size
+    style_right.textColor = text_color
 
     for da in data:
         [Paragraph(da[0], style_left), Paragraph(da[1], style_right)]
@@ -293,37 +388,72 @@ def get_base_table(font_name, data):
     table.setStyle(TableStyle([
         ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
         ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-        ('TEXTCOLOR', (0, 0), (0, -1), colors.black),
-        ('TEXTCOLOR', (1, 0), (1, -1), colors.black),
-        ('FONT', (0, 0), (0, -1), font_name,9),
-        ('FONT', (1, 0), (1, -1), font_name, 9),
-        # ('LEADING', (0, 0), (-1, -1), 30),
-        # ('BOTTOMPADDING', (0, 0), (-1, -1), 12),
+        ('TEXTCOLOR', (0, 0), (0, -1), text_color),
+        ('TEXTCOLOR', (1, 0), (1, -1), text_color),
+        ('FONT', (0, 0), (0, -1), font_name, font_size),
+        ('FONT', (1, 0), (1, -1), font_name, font_size),
     ]))
     
     return table
 
 
-def get_financias_table(font_name, data):
+def get_financias_table(font_name, data, config=None):
     col_widths = [115, 55, 55, 55, 55]
 
     table = Table(data, colWidths=col_widths)
 
+    # Get table styles from config
+    if config and 'components' in config and 'table_style' in config['components']:
+        table_config = config['components']['table_style']
+        header_style = table_config.get('header', {})
+        body_style = table_config.get('body', {})
+        border_style = table_config.get('borders', {})
+        
+        header_fill = hex_to_color(header_style.get('fill', '#0060A0'))
+        header_text_color = hex_to_color(header_style.get('text_color', '#FFFFFF'))
+        header_font = header_style.get('font_family', font_name)
+        header_size = header_style.get('font_size_pt', 8)
+        
+        body_font = body_style.get('font_family', font_name)
+        body_size = body_style.get('font_size_pt', 8)
+        body_text_color = hex_to_color(body_style.get('text_color', '#111111'))
+        zebra_stripes = body_style.get('zebra_stripes', True)
+        stripe_fill = hex_to_color(body_style.get('stripe_fill', '#F5F5F5'))
+        
+        border_color = hex_to_color(border_style.get('color', '#E6E6E6'))
+        border_thickness = border_style.get('thickness_pt', 0.5)
+    else:
+        header_fill = colors.lightgrey
+        header_text_color = colors.white
+        header_font = font_name
+        header_size = 8
+        body_font = font_name
+        body_size = 8
+        body_text_color = colors.black
+        zebra_stripes = True
+        stripe_fill = colors.whitesmoke
+        border_color = colors.lightgrey
+        border_thickness = 0.5
+
     style = TableStyle([
-        ('BACKGROUND', (0, 0), (-1, 0), colors.lightgrey),  # 表头背景色
+        ('BACKGROUND', (0, 0), (-1, 0), header_fill),
+        ('TEXTCOLOR', (0, 0), (-1, 0), header_text_color),
         ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-        ('ALIGN', (1, 0), (-1, -1), 'CENTER'),             # 居中对齐
-        ('FONTNAME', (0, 0), (-1, -1), font_name),   # 表头字体加粗
-        ('FONTSIZE', (0, 0), (-1, -1), 8),                # 字体大小
-        # ('BOTTOMPADDING', (0, 0), (-1, 0), 12),            # 表头底部填充
+        ('ALIGN', (1, 0), (-1, -1), 'CENTER'),
+        ('FONTNAME', (0, 0), (-1, 0), header_font),
+        ('FONTSIZE', (0, 0), (-1, 0), header_size),
+        ('FONTNAME', (0, 1), (-1, -1), body_font),
+        ('FONTSIZE', (0, 1), (-1, -1), body_size),
+        ('TEXTCOLOR', (0, 1), (-1, -1), body_text_color),
+        ('GRID', (0, 0), (-1, -1), border_thickness, border_color),
     ])
 
-    for i in range(1, len(data)):
-        if i % 2 == 0:
-            bg_color = colors.whitesmoke
-        else:
-            bg_color = colors.white
-        style.add('BACKGROUND', (0, i), (-1, i), bg_color)
+    if zebra_stripes:
+        for i in range(1, len(data)):
+            if i % 2 == 0:
+                style.add('BACKGROUND', (0, i), (-1, i), stripe_fill)
+            else:
+                style.add('BACKGROUND', (0, i), (-1, i), colors.white)
 
     table.setStyle(style)
     return table
@@ -331,8 +461,12 @@ def get_financias_table(font_name, data):
 def build_report(
     res_data,
     date,   
-    save_path='./reports/'
+    save_path='./reports/',
+    config_path='config.yaml'
 ):
+    # Load configuration
+    config = load_config(config_path)
+    
     figs_path = os.path.join(save_path, "figs")
     if not os.path.exists(figs_path):
         os.mkdir(figs_path)
@@ -346,8 +480,19 @@ def build_report(
     company_name = res_data['company_name']
     stock_code = res_data['stock_code']
     
+    # Get primary color from config
+    if config and 'brand' in config and 'colors' in config['brand']:
+        primary_color_hex = config['brand']['colors']['primary'].get('hex', '#0060A0')
+        color1 = hex_to_color(primary_color_hex)
+    else:
+        color1 = Color(red=158 / 255.0, green=31 / 255.0, blue=0)
+    
+    # Get font from config
+    primary_font = get_font_name(config, 'primary_family')
+    secondary_font = get_font_name(config, 'secondary_family')
+    
     # Try to register Chinese font, fallback to default if not found
-    font_name = 'Helvetica'  # Default font
+    font_name = primary_font  # Default font from config
     try:
         # Try multiple possible font paths
         font_paths = ['msyh.ttf', './msyh.ttf', '../msyh.ttf', '/System/Library/Fonts/PingFang.ttc']
@@ -362,22 +507,27 @@ def build_report(
                 except:
                     continue
         if not font_registered:
-            # Use default built-in font if Chinese font not found
-            print("Warning: Chinese font not found, using default built-in font (Helvetica)")
-            font_name = 'Helvetica'
+            # Use config font or default built-in font if Chinese font not found
+            if font_name not in ['Helvetica', 'Arial']:
+                print(f"Warning: Chinese font not found, using config font: {font_name}")
+            else:
+                print("Warning: Chinese font not found, using default built-in font (Helvetica)")
+                font_name = 'Helvetica'
     except Exception as e:
-        print(f"Warning: Could not register Chinese font: {e}, using default built-in font (Helvetica)")
-        font_name = 'Helvetica'
+        print(f"Warning: Could not register Chinese font: {e}, using config font: {font_name}")
+        font_name = primary_font if primary_font else 'Helvetica'
+    
+    # Get page size from config
+    page_size = get_page_size(config)
     
     styles = getSampleStyleSheet()
-    color1 = Color(red=158 / 255.0,green=31 / 255.0,blue=0)
 
     filename = (
             os.path.join(save_path, f"{stock_code}_{date}_{res_data['model_name']}.pdf")
             if os.path.isdir(save_path)
             else save_path
         )
-    c = canvas.Canvas(filename)
+    c = canvas.Canvas(filename, pagesize=page_size)
 
     # Try to load logo, use multiple possible paths
     logo_paths = [
@@ -394,6 +544,48 @@ def build_report(
             logo_path = path
             break
     
+    # Get page dimensions
+    page_width, page_height = page_size
+    
+    # Get layout margins from config
+    if config and 'layout' in config and 'page' in config['layout'] and 'margins_in' in config['layout']['page']:
+        margins = config['layout']['page']['margins_in']
+        margin_top = margins.get('top', 0.6) * 72  # Convert inches to points
+        margin_left = margins.get('left', 0.65) * 72
+        margin_right = margins.get('right', 0.65) * 72
+        margin_bottom = margins.get('bottom', 0.6) * 72
+    else:
+        margin_top = 0.6 * 72
+        margin_left = 0.65 * 72
+        margin_right = 0.65 * 72
+        margin_bottom = 0.6 * 72
+    
+    # Draw header if configured
+    if config and 'layout' in config and 'header' in config['layout']:
+        header_config = config['layout']['header']
+        if header_config.get('show', True):
+            header_font = header_config.get('font_family', secondary_font)
+            header_size = header_config.get('font_size_pt', 8)
+            header_color = hex_to_color(header_config.get('color', '#4A4A4A'))
+            
+            left_text = header_config.get('left_text', '')
+            right_text = header_config.get('right_text', '')
+            
+            c.setFont(header_font, header_size)
+            c.setFillColor(header_color)
+            c.drawString(margin_left, page_height - margin_top + 10, left_text)
+            c.drawRightString(page_width - margin_right, page_height - margin_top + 10, right_text)
+            
+            # Draw divider if configured
+            if header_config.get('divider', {}).get('show', True):
+                divider_config = header_config['divider']
+                divider_color = hex_to_color(divider_config.get('color', '#E6E6E6'))
+                divider_thickness = divider_config.get('thickness_pt', 0.75)
+                c.setStrokeColor(divider_color)
+                c.setLineWidth(divider_thickness)
+                c.line(margin_left, page_height - margin_top, page_width - margin_right, page_height - margin_top)
+                c.setLineWidth(1)
+    
     if logo_path:
         try:
             img = Image(logo_path)
@@ -401,35 +593,60 @@ def build_report(
             raw_height = img.imageHeight
             img.drawHeight = 40
             img.drawWidth = img.drawHeight * (raw_width / raw_height)
-            img.drawOn(c, 40, A4[1] - 70)
+            img.drawOn(c, margin_left, page_height - margin_top - 30)
         except Exception as e:
             print(f"Warning: Could not load logo: {e}")
     else:
         print("Warning: Logo file not found, skipping logo")
     
-    c.setStrokeColor(colors.black)
-    c.setFont(font_name, 12)
-    c.drawString(28, A4[1] - 95, f"{company_name}（{stock_code}）")
-    c.drawString(210, A4[1] - 95, f"{date}")
+    # Get typography for company name and date
+    if config and 'typography' in config and 'scale' in config['typography']:
+        h2_style = config['typography']['scale'].get('h2', {})
+        h2_size = h2_style.get('font_size_pt', 12)
+        h2_color = hex_to_color(h2_style.get('color', '#111111'))
+    else:
+        h2_size = 12
+        h2_color = colors.black
+    
+    c.setStrokeColor(h2_color)
+    c.setFont(font_name, h2_size)
+    c.drawString(margin_left, page_height - margin_top - 50, f"{company_name}（{stock_code}）")
+    c.drawString(margin_left + 180, page_height - margin_top - 50, f"{date}")
 
     title = company_name + ":" + res_data['report_title'] if \
         company_name not in res_data['report_title'] else res_data['report_title']
     
+    # Get title style from config
+    if config and 'components' in config and 'title_block' in config['components']:
+        title_config = config['components']['title_block']['title_font']
+        title_font = title_config.get('family', font_name)
+        title_size = title_config.get('size_pt', 24)
+        title_color = hex_to_color(title_config.get('color', primary_color_hex))
+    elif config and 'typography' in config and 'scale' in config['typography']:
+        h1_style = config['typography']['scale'].get('h1', {})
+        title_font = h1_style.get('font_family', font_name)
+        title_size = h1_style.get('font_size_pt', 24)
+        title_color = hex_to_color(h1_style.get('color', '#111111'))
+    else:
+        title_font = font_name
+        title_size = 17
+        title_color = color1
+    
     title_style = ParagraphStyle(
         name='CustomStyle',
         parent=styles['Normal'],  
-        fontName=font_name,
-        fontSize=17,
-        leading=0,
-        textColor=color1,
+        fontName=title_font,
+        fontSize=title_size,
+        leading=title_size * 1.15,
+        textColor=title_color,
         alignment=1, 
         spaceBefore=10,
         spaceAfter=10
     )
     title_paragraph = Paragraph(title, title_style)
     frame_title = Frame(
-        x1=160, 
-        y1=A4[1] - 65, 
+        x1=margin_left + 130, 
+        y1=page_height - margin_top - 70, 
         width=400, 
         height=30, 
         showBoundary=0
@@ -438,23 +655,24 @@ def build_report(
     
     
     c.setStrokeColor(color1)
-    c.line(A4[0] - 210, A4[1] - 120, A4[0] - 210, 50)
+    c.line(page_width - margin_right - 185, page_height - margin_top - 95, page_width - margin_right - 185, margin_bottom)
     
     # frame_left
     c.setStrokeColor(colors.black)
     frame_left_list = []
+    left_frame_width = page_width - margin_right - 185 - margin_left
     frame_left = Frame(
-        x1=25, 
-        y1=0, 
-        width=A4[0] - 235, 
-        height=A4[1] - 120, 
+        x1=margin_left, 
+        y1=margin_bottom, 
+        width=left_frame_width, 
+        height=page_height - margin_top - margin_bottom - 95, 
         showBoundary=0,
         topPadding=0,
         leftPadding=4, 
         rightPadding=4
     )
     
-    frame_title1 = draw_frame_title("核心观点", color1, A4[0] - 243, font_name)
+    frame_title1 = draw_frame_title("核心观点", color1, left_frame_width - 8, font_name, config)
     frame_left_list.append(frame_title1)
     frame_left_list.append(Spacer(1, 4))
     
@@ -472,13 +690,19 @@ def build_report(
             icon_path = path
             break
     
+    # Get accent color for titles in paragraphs
+    if config and 'brand' in config and 'colors' in config['brand']:
+        accent_color_hex = config['brand']['colors'].get('primary', {}).get('hex', '#0060A0')
+    else:
+        accent_color_hex = '#9E1F00'
+    
     for sub_advisor in res_data["analyze_advisor"]:
-        paragraph_text = '<font color="#9E1F00"><b>' + sub_advisor['title'] + '：</b></font>' + sub_advisor['content']
+        paragraph_text = f'<font color="{accent_color_hex}"><b>{sub_advisor["title"]}：</b></font>{sub_advisor["content"]}'
         try:
-            paragraph_advisor = BulletParagraph(icon_path, paragraph_text, font_name)
+            paragraph_advisor = BulletParagraph(icon_path, paragraph_text, font_name, config)
         except:
             # Fallback if icon not found
-            paragraph_advisor = Paragraph(paragraph_text.replace('<font color="#9E1F00"><b>', '<b>').replace('</b></font>', '</b>'), 
+            paragraph_advisor = Paragraph(paragraph_text.replace(f'<font color="{accent_color_hex}"><b>', '<b>').replace('</b></font>', '</b>'), 
                                          ParagraphStyle(name='Custom', parent=styles['Normal'], fontName=font_name))
         frame_left_list.append(paragraph_advisor)
         frame_left_list.append(Spacer(1, 4))
@@ -486,12 +710,16 @@ def build_report(
     risk_assessment = ""
     for idx, risk in enumerate(res_data["analyze_risk"]):
         risk_assessment += "(" + str(idx + 1) + ")" + risk + ";"
-    paragraph_text = '<font color="#9E1F00"><b>风险评估：</b></font>' + risk_assessment
-    paragraph_advisor = BulletParagraph('figs/icon.png', paragraph_text, font_name)
+    paragraph_text = f'<font color="{accent_color_hex}"><b>风险评估：</b></font>{risk_assessment}'
+    try:
+        paragraph_advisor = BulletParagraph(icon_path, paragraph_text, font_name, config)
+    except:
+        paragraph_advisor = Paragraph(paragraph_text.replace(f'<font color="{accent_color_hex}"><b>', '<b>').replace('</b></font>', '</b>'), 
+                                     ParagraphStyle(name='Custom', parent=styles['Normal'], fontName=font_name))
     frame_left_list.append(paragraph_advisor)
     frame_left_list.append(Spacer(1, 4))
         
-    frame_title2 = draw_frame_title("财务数据", color1, A4[0] - 243, font_name)
+    frame_title2 = draw_frame_title("财务数据", color1, left_frame_width - 8, font_name, config)
     frame_left_list.append(frame_title2)
     frame_left_list.append(Spacer(1, 5))
     df = res_data["financials"]['stock_income']
@@ -504,90 +732,125 @@ def build_report(
     df.reset_index(inplace=True)
     df.rename(columns={'index': ''}, inplace=True)
     
-    # df.reset_index(inplace=True)
-    # df = df[df['index'].isin(TARGETMAP.keys())]
-    # df['index'] = df['index'].map(TARGETMAP)
-    # df = df.applymap(lambda x: int(x / 1000000) if isinstance(x, (int, float)) and not pd.isna(x) else x)
-    # df_columns = df.columns
-    # df_new_columns = [""]
-    # for column_name in list(df_columns)[1:]:
-    #     df_new_columns.append(str(column_name)[:10])
-    # df.columns = df_new_columns
-    # df = df[df.columns[:5]]
     table_data = []
     table_data += [df.columns.to_list()] + df.values.tolist()
-    financias_table = get_financias_table(font_name, table_data)
+    financias_table = get_financias_table(font_name, table_data, config)
     frame_left_list.append(financias_table)
     frame_left.addFromList(frame_left_list, c)
     
     
     # frame_right
+    right_frame_width = 185
+    right_frame_x = page_width - margin_right - right_frame_width
     frame_right_list = []
     frame_right = Frame(
-        x1=A4[0] - 210, 
-        y1=0, 
-        width=185, 
-        height=A4[1] - 120, 
+        x1=right_frame_x, 
+        y1=margin_bottom, 
+        width=right_frame_width, 
+        height=page_height - margin_top - margin_bottom - 95, 
         showBoundary=0,
         topPadding=0
     )
     frame_right.addFromList(frame_right_list, c)
     
-    frame_title3 = draw_frame_title("作者", color1, 177, font_name)
+    frame_title3 = draw_frame_title("作者", color1, right_frame_width - 4, font_name, config)
     _1, _2 = frame_title3.wrap(0, 0)
-    frame_title3.drawOn(c, A4[0] - 206, A4[1] - 120 - 21)
+    frame_title3.drawOn(c, right_frame_x + 2, page_height - margin_top - 95 - 21)
     
-    c.setStrokeColor(color1)
-    c.line(A4[0] - 206, A4[1] - 150, A4[0] - 29, A4[1] - 150)
-    c.setStrokeColor(colors.black)
-    c.setFont(font_name, 9)
-    height_1 = A4[1] - 170
-    c.drawString(A4[0] - 200, height_1, "分析师: FinRpt")
-    c.drawString(A4[0] - 200, height_1 - 20, "版权: ****")
-    c.drawString(A4[0] - 200, height_1 - 40, "地址: ****")
+    # Get section divider style from config
+    if config and 'components' in config and 'section_heading' in config['components']:
+        section_config = config['components']['section_heading']
+        if section_config.get('rule', {}).get('show', True):
+            rule_config = section_config['rule']
+            divider_color = hex_to_color(rule_config.get('color', '#E6E6E6'))
+            divider_thickness = rule_config.get('thickness_pt', 1.0)
+        else:
+            divider_color = color1
+            divider_thickness = 1.0
+    else:
+        divider_color = color1
+        divider_thickness = 1.0
     
-    frame_title4 = draw_frame_title("基本状况", color1, 177, font_name)
+    c.setStrokeColor(divider_color)
+    c.setLineWidth(divider_thickness)
+    c.line(right_frame_x + 2, page_height - margin_top - 95 - 50, right_frame_x + right_frame_width - 2, page_height - margin_top - 95 - 50)
+    c.setLineWidth(1)
+    
+    # Get body text style for author info
+    if config and 'typography' in config and 'scale' in config['typography']:
+        body_style = config['typography']['scale'].get('body', {})
+        body_size = body_style.get('font_size_pt', 9)
+        body_color = hex_to_color(body_style.get('color', '#111111'))
+    else:
+        body_size = 9
+        body_color = colors.black
+    
+    c.setStrokeColor(body_color)
+    c.setFont(font_name, body_size)
+    height_1 = page_height - margin_top - 95 - 70
+    c.drawString(right_frame_x + 4, height_1, "分析师: FinRpt")
+    c.drawString(right_frame_x + 4, height_1 - 20, "版权: ****")
+    c.drawString(right_frame_x + 4, height_1 - 40, "地址: ****")
+    
+    frame_title4 = draw_frame_title("基本状况", color1, right_frame_width - 4, font_name, config)
     _1, _2 = frame_title4.wrap(0, 0)
-    frame_title4.drawOn(c, A4[0] - 206, A4[1] - 245)
+    frame_title4.drawOn(c, right_frame_x + 2, page_height - margin_top - 95 - 170)
     
     key_data = get_key_data(stock_code, date)
     base_data = {BASE_key_mapping[key]: value for key, value in key_data.items()}
     base_data["交易所"] = res_data["company_info"]["stock_exchange"]
     base_data["行业"] = res_data["company_info"]["industry_category"][-11:]
     base_data = [[k, v] for k, v in base_data.items()]
-    base_table = get_base_table(font_name, base_data)
+    base_table = get_base_table(font_name, base_data, config)
     base_table.wrap(0, 0)
-    base_table.drawOn(c, A4[0] - 205, A4[1] - 345)
+    base_table.drawOn(c, right_frame_x + 3, page_height - margin_top - 95 - 270)
     
-    frame_title5 = draw_frame_title("股市与市场走势对比", color1, 177, font_name)
+    frame_title5 = draw_frame_title("股市与市场走势对比", color1, right_frame_width - 4, font_name, config)
     _1, _2 = frame_title5.wrap(0, 0)
-    frame_title5.drawOn(c, A4[0] - 206, A4[1] - 375)
+    frame_title5.drawOn(c, right_frame_x + 2, page_height - margin_top - 95 - 300)
     img = Image(share_performance_image_path)
     raw_width = img.imageWidth
     raw_height = img.imageHeight
-    img.drawWidth = 170
+    img.drawWidth = right_frame_width - 8
     img.drawHeight = img.drawWidth * (raw_height / raw_width)
-    img.drawOn(c, A4[0] - 205, A4[1] - 485)
+    img.drawOn(c, right_frame_x + 3, page_height - margin_top - 95 - 410)
     
-    frame_title6 = draw_frame_title("PE & EPS", color1, 177, font_name)
+    frame_title6 = draw_frame_title("PE & EPS", color1, right_frame_width - 4, font_name, config)
     frame_title6.wrap(0, 0)
-    frame_title6.drawOn(c, A4[0] - 206, A4[1] - 510)
+    frame_title6.drawOn(c, right_frame_x + 2, page_height - margin_top - 95 - 435)
     img = Image(pe_eps_performance_image_path)
     raw_width = img.imageWidth
     raw_height = img.imageHeight
-    img.drawWidth = 170
+    img.drawWidth = right_frame_width - 8
     img.drawHeight = img.drawWidth * (raw_height / raw_width)
-    img.drawOn(c, A4[0] - 205, A4[1] - 620)
+    img.drawOn(c, right_frame_x + 3, page_height - margin_top - 95 - 545)
     
-    frame_title6 = draw_frame_title("单季营业收入及增速", color1, 177, font_name)
+    frame_title6 = draw_frame_title("单季营业收入及增速", color1, right_frame_width - 4, font_name, config)
     frame_title6.wrap(0, 0)
-    frame_title6.drawOn(c, A4[0] - 206, A4[1] - 645)
+    frame_title6.drawOn(c, right_frame_x + 2, page_height - margin_top - 95 - 570)
     img = Image(revenue_performance_image_path)
     raw_width = img.imageWidth
     raw_height = img.imageHeight
-    img.drawWidth = 170
+    img.drawWidth = right_frame_width - 8
     img.drawHeight = img.drawWidth * (raw_height / raw_width)
-    img.drawOn(c, A4[0] - 202, A4[1] - 755)
+    img.drawOn(c, right_frame_x + 3, page_height - margin_top - 95 - 680)
+    
+    # Draw footer if configured
+    if config and 'layout' in config and 'footer' in config['layout']:
+        footer_config = config['layout']['footer']
+        if footer_config.get('show', True):
+            footer_font = footer_config.get('font_family', secondary_font)
+            footer_size = footer_config.get('font_size_pt', 7)
+            footer_color = hex_to_color(footer_config.get('color', '#7A7A7A'))
+            
+            provider = config.get('inputs', {}).get('source_report', {}).get('provider', '')
+            left_text = footer_config.get('left_text_template', '{provider} Research').format(provider=provider)
+            right_text = footer_config.get('right_text_template', '{page_number}').format(page_number='1')
+            
+            c.setFont(footer_font, footer_size)
+            c.setFillColor(footer_color)
+            c.drawString(margin_left, margin_bottom - 15, left_text)
+            c.drawRightString(page_width - margin_right, margin_bottom - 15, right_text)
     
     c.save()
 

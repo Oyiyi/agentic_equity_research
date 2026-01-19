@@ -422,49 +422,79 @@ def generate_key_metrics_table(
     
     # Sort years to get latest 2 actual years + forecast
     # The data should have: 2 actual years + 1-2 forecast years
-    from datetime import datetime
-    current_year = int(datetime.now().strftime('%Y'))
-    
-    # Separate years into actual (from API) and forecast (generated)
-    # We can identify forecasts by checking if consecutive years have identical values
-    # or by checking if year > latest API year
     all_years = sorted(metrics.keys(), reverse=True, key=lambda x: int(x) if x.isdigit() else 0)
     
-    # Find the latest actual year by checking API data patterns
-    # Actual years should have different values, forecasts might duplicate
+    # To properly identify actual vs forecast years, we need to check the API
+    # But for graph generation, we can use a heuristic:
+    # 1. Fetch fresh data from API to see what the latest actual year is
+    # 2. Years <= latest_actual_year are actual, years > latest_actual_year are forecasts
+    
+    # Try to determine latest actual year by checking API
+    try:
+        from agentic.fmp_data_puller import fetch_financial_statements_fmp, FMP_API_KEY, calculate_key_metrics
+        import os
+        
+        # Fetch fresh data to determine latest actual year
+        income_statements, balance_sheets, cash_flows = fetch_financial_statements_fmp(
+            ticker, FMP_API_KEY, period='annual', limit=3
+        )
+        
+        if income_statements and balance_sheets and cash_flows:
+            # Calculate metrics to get actual years from API
+            temp_metrics = calculate_key_metrics(
+                income_statements, balance_sheets, cash_flows,
+                None, None, None
+            )
+            actual_years_from_api = sorted(temp_metrics.keys(), reverse=True, key=int)
+            if actual_years_from_api:
+                latest_actual_year = int(actual_years_from_api[0])
+            else:
+                latest_actual_year = None
+        else:
+            latest_actual_year = None
+    except:
+        latest_actual_year = None
+    
+    # Separate years into actual and forecast
     actual_years = []
     forecast_years = []
     
-    # Check each year - identify actual vs forecast
-    # Actual years: from API, have unique data, and are <= current year
-    # Forecast years: duplicates of previous year or > current year
-    # Process years from oldest to newest to properly identify duplicates
-    sorted_ascending = sorted(all_years, key=lambda x: int(x) if x.isdigit() else 0)
-    
-    for i, year_str in enumerate(sorted_ascending):
-        if not year_str.isdigit():
-            continue
-        year_int = int(year_str)
-        
-        # Check if this year's data matches a PREVIOUS actual year (indicating it's a forecast copy)
-        is_duplicate = False
-        # Compare with all previously identified actual years to detect duplicates
-        for prev_actual in actual_years:
-            if not prev_actual.isdigit():
+    if latest_actual_year:
+        # Use API data to determine actual vs forecast
+        for year_str in all_years:
+            if not year_str.isdigit():
                 continue
-            # Compare key metrics to detect exact duplicates (forecasts often copy previous year)
-            if (abs(metrics[year_str].get('revenue', 0) - metrics[prev_actual].get('revenue', 0)) < 1 and
-                abs(metrics[year_str].get('adj_ebitda', 0) - metrics[prev_actual].get('adj_ebitda', 0)) < 1 and
-                abs(metrics[year_str].get('adj_net_income', 0) - metrics[prev_actual].get('adj_net_income', 0)) < 1):
-                is_duplicate = True
-                break
-        
-        # If year is <= current year and not a duplicate of an actual year, it's actual data
-        # If it's a duplicate or > current year, it's a forecast
-        if year_int <= current_year and not is_duplicate:
-            actual_years.append(year_str)
-        else:
-            forecast_years.append(year_str)
+            year_int = int(year_str)
+            if year_int <= latest_actual_year:
+                actual_years.append(year_str)
+            else:
+                forecast_years.append(year_str)
+    else:
+        # Fallback: use heuristic based on calendar year
+        from datetime import datetime
+        current_year = int(datetime.now().strftime('%Y'))
+        # Assume years that are significantly in the past or match known patterns are actual
+        # This is a fallback - ideally we always have API data
+        sorted_ascending = sorted(all_years, key=lambda x: int(x) if x.isdigit() else 0)
+        for year_str in sorted_ascending:
+            if not year_str.isdigit():
+                continue
+            year_int = int(year_str)
+            # If year is > current_year, it's definitely a forecast
+            if year_int > current_year:
+                forecast_years.append(year_str)
+            else:
+                # Check for duplicates to identify placeholder forecasts
+                is_duplicate = False
+                for prev_actual in actual_years:
+                    if not prev_actual.isdigit():
+                        continue
+                    if (abs(metrics[year_str].get('revenue', 0) - metrics[prev_actual].get('revenue', 0)) < 1 and
+                        abs(metrics[year_str].get('adj_ebitda', 0) - metrics[prev_actual].get('adj_ebitda', 0)) < 1):
+                        is_duplicate = True
+                        break
+                if not is_duplicate:
+                    actual_years.append(year_str)
     
     # Sort actual years (most recent first)
     actual_years = sorted(actual_years, reverse=True, key=int)
