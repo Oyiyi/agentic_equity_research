@@ -97,6 +97,8 @@ class EquityReportGenerator:
         self.output_dir = Path(output_dir) if output_dir else project_root / 'reports'
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.model_name = model_name
+        # Store project root for later use (e.g., logo path resolution)
+        self._project_root = project_root
         
         # Load configuration from config.yaml
         if config_path is None:
@@ -104,6 +106,8 @@ class EquityReportGenerator:
         else:
             config_path = Path(config_path)
         
+        # Store config_path for later use (e.g., passing to AnalystAgent)
+        self._config_path = config_path
         self.config = self._load_config(config_path)
         
         # Load brand and styling from config
@@ -240,7 +244,8 @@ class EquityReportGenerator:
         analyst = AnalystAgent(
             model_name=self.model_name,
             db_path=self.db_path,
-            save_path=str(self.output_dir)
+            save_path=str(self.output_dir),
+            config_path=str(self._config_path) if hasattr(self, '_config_path') else None
         )
         # Set save_dir attribute so analyst_agent saves to analysts folder
         if hasattr(self, '_current_analysts_dir'):
@@ -453,6 +458,50 @@ class EquityReportGenerator:
         table.setStyle(style)
         return table
     
+    def regenerate_report_from_folder(self, base_dir_path: str, output_filename: str = None) -> str:
+        """
+        Regenerate report using existing files in a folder.
+        
+        Args:
+            base_dir_path: Path to existing folder (e.g., 'reports/Tesla Inc_20260119_195917')
+            output_filename: Output filename (default: auto-generated)
+            
+        Returns:
+            Path to generated PDF file
+        """
+        base_dir = Path(base_dir_path)
+        if not base_dir.exists():
+            raise ValueError(f"Folder not found: {base_dir_path}")
+        
+        figs_dir = base_dir / "figs"
+        report_dir = base_dir / "report"
+        analysts_dir = base_dir / "analysts"
+        
+        # Load analysis result from analysts folder if exists
+        analysis_json_path = analysts_dir / 'analysis_result.json'
+        if analysis_json_path.exists():
+            with open(analysis_json_path, 'r', encoding='utf-8') as f:
+                self.analysis_result = json.load(f)
+            print(f"Loaded analysis result from {analysis_json_path}")
+        
+        # Load existing images from figs folder
+        self.fig_paths = {}
+        if (figs_dir / 'graph_price_performance.png').exists():
+            self.fig_paths['price_performance'] = str(figs_dir / 'graph_price_performance.png')
+        if (figs_dir / 'table_company_data.png').exists():
+            self.fig_paths['company_data_table'] = str(figs_dir / 'table_company_data.png')
+        if (figs_dir / 'table_key_metrics.png').exists():
+            self.fig_paths['key_metrics_table'] = str(figs_dir / 'table_key_metrics.png')
+        
+        # Set output filename - save PDF in report/ directory (overwrite existing)
+        if not output_filename:
+            output_filename = f"{self.ticker}_equity_report.pdf"
+        
+        output_path = report_dir / output_filename
+        
+        # Build and save PDF (reuse the rest of generate_report logic)
+        return self._build_pdf(output_path, figs_dir)
+    
     def generate_report(self, output_filename: str = None) -> str:
         """
         Generate the complete equity research report PDF.
@@ -507,10 +556,14 @@ class EquityReportGenerator:
         
         graph_results = {}
         
+        # Get config path for graph generation
+        config_path = self._project_root / 'config.yaml' if hasattr(self, '_project_root') else None
+        
         # Generate each graph/table in figs/ directory
         try:
             graph_results['price_performance'] = plot_price_performance(
-                self.ticker, start_date, end_date, str(figs_dir), self.db_path
+                self.ticker, start_date, end_date, str(figs_dir), self.db_path, 
+                config_path=str(config_path) if config_path else None
             )
         except Exception as e:
             print(f"Warning: Could not generate price performance graph: {e}")
@@ -554,13 +607,87 @@ class EquityReportGenerator:
         
         output_path = report_dir / output_filename
         
-        # Build story (content)
-        styles = getSampleStyleSheet()
+        # Build PDF using Canvas and Frames (similar to ReportBuild.py format)
+        return self._build_pdf(output_path, figs_dir)
+    
+    def _draw_frame_title(self, text: str, bg_color, col_width: float, font_name: str) -> Table:
+        """
+        Draw a frame title with background color (like ReportBuild.py draw_frame_title).
+        Made very compact with minimal padding (almost same height as text) and bold font.
         
+        Args:
+            text: Title text
+            bg_color: Background color (Color object)
+            col_width: Column width
+            font_name: Font name
+            
+        Returns:
+            Table object for the title
+        """
+        data = [[text]]
+        table = Table(data, colWidths=[col_width])
+        
+        # Get table header style from config
+        table_style_config = self.config.get('components', {}).get('table_style', {})
+        if table_style_config:
+            header_style = table_style_config.get('header', {})
+            header_font_raw = header_style.get('font_family', font_name)
+            header_font = self._get_font_name(header_font_raw, self.font_secondary_fallbacks)
+            header_size = header_style.get('font_size_pt', 9)
+            # For light grey background, use dark text; for dark background, use white text
+            # Check if bg_color is light (we'll use dark text for light grey)
+            if bg_color == self.color_light_grey:
+                text_color = self.color_text  # Dark text on light background
+            else:
+                text_color = HexColor(header_style.get('text_color', '#FFFFFF'))  # White text on dark background
+        else:
+            header_font = self._get_font_name(font_name, self.font_secondary_fallbacks)
+            header_size = 9
+            # For light grey background, use dark text
+            if bg_color == self.color_light_grey:
+                text_color = self.color_text
+            else:
+                text_color = self.color_white
+        
+        # Make font bold - use Bold variant if available
+        if header_font == 'Helvetica':
+            bold_font = 'Helvetica-Bold'
+        elif header_font == 'Times-Roman':
+            bold_font = 'Times-Bold'
+        elif header_font == 'Courier':
+            bold_font = 'Courier-Bold'
+        else:
+            bold_font = header_font  # Fallback
+        
+        # Minimal padding - almost same height as text
+        table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, -1), bg_color),
+            ('TEXTCOLOR', (0, 0), (-1, -1), text_color),
+            ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),  # Vertical center
+            ('FONTSIZE', (0, 0), (-1, -1), header_size),
+            ('FONTNAME', (0, 0), (-1, -1), bold_font),  # Bold font
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 1),  # Minimal padding - almost same as text height
+            ('TOPPADDING', (0, 0), (-1, -1), 1),  # Minimal padding
+            ('LEFTPADDING', (0, 0), (-1, -1), 4),  # Left padding for text
+            ('RIGHTPADDING', (0, 0), (-1, -1), 4),  # Right padding for text
+        ]))
+        return table
+    
+    def _prepare_left_story(self, styles) -> List:
+        """
+        Prepare left column content (story).
+        
+        Args:
+            styles: ReportLab styles object
+            
+        Returns:
+            List of flowables for left column
+        """
         # Custom styles from config
         typo_scale = self.typography.get('scale', {})
         
-        # Title style (H1 from config)
+        # Title style (H1 from config) - keep original spaceAfter for company name
         h1_config = typo_scale.get('h1', {})
         title_style = ParagraphStyle(
             'CustomTitle',
@@ -568,12 +695,12 @@ class EquityReportGenerator:
             fontSize=h1_config.get('font_size_pt', 24),
             textColor=HexColor(h1_config.get('color', '#111111')),
             fontName=self._get_font_name(h1_config.get('font_family', self.font_primary), self.font_primary_fallbacks),
-            spaceAfter=12,
+            spaceAfter=12,  # Keep original spacing after company name
             alignment=TA_LEFT,
             leading=h1_config.get('font_size_pt', 24) * h1_config.get('line_height', 1.15)
         )
         
-        # Headline style (H2 from config)
+        # Headline style (H2 from config) - keep original spaceAfter
         h2_config = typo_scale.get('h2', {})
         headline_style = ParagraphStyle(
             'CustomHeadline',
@@ -581,7 +708,7 @@ class EquityReportGenerator:
             fontSize=h2_config.get('font_size_pt', 14),
             textColor=HexColor(h2_config.get('color', '#111111')),
             fontName=self._get_font_name(h2_config.get('font_family', self.font_primary), self.font_primary_fallbacks),
-            spaceAfter=12,
+            spaceAfter=12,  # Keep original spacing
             alignment=TA_LEFT,
             leading=h2_config.get('font_size_pt', 14) * h2_config.get('line_height', 1.2)
         )
@@ -602,8 +729,12 @@ class EquityReportGenerator:
         # Prepare left column content (right column will be drawn directly on canvas)
         left_story = []
         
-        # Left column: Company name, headline, analysis paragraphs
-        left_story.append(Paragraph(self.company_name, title_style))
+        # Left column: Company name (use primary color like neutral blue, bold)
+        company_name_para = Paragraph(
+            f'<b><font color="{self.brand_colors.get("primary", {}).get("hex", "#0060A0")}">{self.company_name}</font></b>',
+            title_style
+        )
+        left_story.append(company_name_para)
         
         # Headline (from analysis or generate one)
         if self.analysis_result and 'key_points' in self.analysis_result:
@@ -611,32 +742,49 @@ class EquityReportGenerator:
         else:
             headline = f"{self.company_name} Analysis"
         left_story.append(Paragraph(headline, headline_style))
+        # Keep original spacing after headline (before paragraphs)
         left_story.append(Spacer(1, 0.15*inch))
         
-        # Analysis paragraphs
+        # Analysis paragraphs - bold first line and highlight financial keywords
         if self.analysis_result and 'analysis' in self.analysis_result:
             analysis = self.analysis_result['analysis']
-            for para_key in ['paragraph_1', 'paragraph_2', 'paragraph_3']:
+            # Get number of paragraphs from config or default to 4
+            num_paragraphs = self.config.get('inputs', {}).get('analyst_analysis', {}).get('num_paragraphs', 4)
+            for i in range(1, num_paragraphs + 1):
+                para_key = f'paragraph_{i}'
                 if para_key in analysis:
                     para_text = analysis[para_key]
-                    left_story.append(Paragraph(para_text, body_style))
+                    
+                    # Highlight financial keywords (before bold formatting)
+                    para_text = self._highlight_financial_keywords(para_text)
+                    
+                    # Bold the first line (first sentence ending with period)
+                    sentences = para_text.split('. ', 1)
+                    if len(sentences) > 1:
+                        first_line = sentences[0] + '. '
+                        rest_text = sentences[1]
+                        # Format first line as bold
+                        formatted_text = f'<b>{first_line}</b>{rest_text}'
+                    else:
+                        # If no period, try to find first sentence end
+                        period_idx = para_text.find('.')
+                        if period_idx > 0:
+                            first_line = para_text[:period_idx+1] + ' '
+                            rest_text = para_text[period_idx+1:]
+                            formatted_text = f'<b>{first_line}</b>{rest_text}'
+                        else:
+                            # Fallback: bold first ~80 characters
+                            if len(para_text) > 80:
+                                first_line = para_text[:80]
+                                rest_text = para_text[80:]
+                                formatted_text = f'<b>{first_line}</b>{rest_text}'
+                            else:
+                                formatted_text = f'<b>{para_text}</b>'
+                    
+                    left_story.append(Paragraph(formatted_text, body_style))
                     left_story.append(Spacer(1, 0.1*inch))
         
-        # Add financial data images to left column if available
-        # Note: left_frame_width will be calculated later, we'll set image width in PDF generation
-        if hasattr(self, 'fig_paths'):
-            # Key metrics table (add to left column)
-            if self.fig_paths.get('key_metrics_table') and Path(self.fig_paths['key_metrics_table']).exists():
-                try:
-                    left_story.append(Spacer(1, 0.2*inch))
-                    left_story.append(Paragraph("Key Metrics", title_style))
-                    left_story.append(Spacer(1, 0.1*inch))
-                    img = Image(self.fig_paths['key_metrics_table'])
-                    # Width will be set when we know the frame width
-                    left_story.append(img)
-                    left_story.append(Spacer(1, 0.1*inch))
-                except Exception as e:
-                    print(f"Warning: Could not add key metrics table: {e}")
+        # Key metrics removed per user request
         
         # Source note (caption style from config)
         caption_config = typo_scale.get('caption', {})
@@ -659,8 +807,108 @@ class EquityReportGenerator:
         disclosure_text = "See page 11 for analyst certification and important disclosures."
         left_story.append(Paragraph(disclosure_text, source_style))
         
-        # Build PDF using Canvas and Frames (similar to ReportBuild.py format)
+        return left_story
+    
+    def _highlight_financial_keywords(self, text: str) -> str:
+        """
+        Highlight financial keywords and metrics in text by wrapping them in blue font tags.
+        
+        This function identifies financial metrics and key terms (like EBITDA margin, 
+        revenue growth, EPS, ROE, etc.) and highlights them in blue.
+        
+        Args:
+            text: Input text to process
+            
+        Returns:
+            Text with financial keywords highlighted in blue HTML tags
+        """
+        import re
+        
+        # Primary color for highlighting
+        highlight_color = self.brand_colors.get("primary", {}).get("hex", "#0060A0")
+        
+        # Patterns to match financial metrics and keywords
+        # Pattern 1: Financial metrics with numbers (e.g., "EBITDA margin of 15.1%", "revenue growth of 0.9%")
+        patterns = [
+            # EBITDA margin patterns
+            (r'\b(EBITDA\s+margin\s+of\s+[\d.]+%)', 'EBITDA margin'),
+            (r'\b(EBITDA\s+margin\s+[\d.]+%)', 'EBITDA margin'),
+            # Revenue patterns
+            (r'\b(revenue\s+growth\s+of\s+[\d.]+%\s+YoY)', 'revenue growth'),
+            (r'\b(revenue\s+growth\s+rate\s+of\s+[\d.]+%)', 'revenue growth'),
+            (r'\b(revenue\s+[\d.]+%)', 'revenue'),
+            # EPS patterns
+            (r'\b(EPS\s+has\s+been\s+stable\s+at\s+around\s+\$?[\d.]+)', 'EPS'),
+            (r'\b(adjusted\s+EPS\s+has\s+been\s+stable\s+at\s+around\s+\$?[\d.]+)', 'EPS'),
+            (r'\b(EPS\s+of\s+\$?[\d.]+)', 'EPS'),
+            # ROE/ROCE patterns
+            (r'\b(ROE\s+and\s+ROCE\s+have\s+also\s+remained\s+constant\s+at\s+[\d.]+%\s+and\s+[\d.]+%)', 'ROE/ROCE'),
+            (r'\b(ROE\s+of\s+[\d.]+%)', 'ROE'),
+            (r'\b(ROCE\s+of\s+[\d.]+%)', 'ROCE'),
+            # Margin patterns
+            (r'\b(net\s+margin\s+of\s+around\s+[\d.]+%)', 'net margin'),
+            (r'\b(operating\s+margin\s+of\s+[\d.]+%)', 'operating margin'),
+            (r'\b(gross\s+margin\s+of\s+[\d.]+%)', 'gross margin'),
+            # Growth patterns
+            (r'\b(growth\s+rate\s+of\s+[\d.]+%)', 'growth rate'),
+            (r'\b(YoY\s+growth\s+of\s+[\d.]+%)', 'YoY growth'),
+            # Price patterns
+            (r'\b(price\s+target\s+of\s+\$[\d.]+)', 'price target'),
+            (r'\b(share\s+price\s+of\s+\$[\d.]+)', 'share price'),
+            # Other financial terms
+            (r'\b(P/E\s+ratio\s+of\s+[\d.]+)', 'P/E ratio'),
+            (r'\b(price-to-book\s+of\s+[\d.]+)', 'price-to-book'),
+        ]
+        
+        # Also check for LLM-marked highlights (if LLM uses <highlight> tags)
+        # This allows LLM to explicitly mark what should be highlighted
+        if '<highlight>' in text and '</highlight>' in text:
+            # Replace LLM highlight tags with blue font tags
+            text = re.sub(
+                r'<highlight>(.*?)</highlight>',
+                f'<font color="{highlight_color}">\\1</font>',
+                text,
+                flags=re.IGNORECASE | re.DOTALL
+            )
+        
+        # Apply pattern-based highlighting (only if not already highlighted)
+        # We need to be careful not to double-highlight
+        for pattern, _ in patterns:
+            # Find all matches
+            matches = list(re.finditer(pattern, text, re.IGNORECASE))
+            # Process from end to start to preserve indices
+            for match in reversed(matches):
+                matched_text = match.group(1)
+                # Check if already highlighted
+                start, end = match.span(1)
+                # Check if this range is already inside a font tag
+                before = text[:start]
+                after = text[end:]
+                if '<font color=' not in before[-100:] or '</font>' not in after[:100]:
+                    # Not already highlighted, add highlight
+                    highlighted = f'<font color="{highlight_color}">{matched_text}</font>'
+                    text = text[:start] + highlighted + text[end:]
+        
+        return text
+    
+    def _build_pdf(self, output_path: Path, figs_dir: Path) -> str:
+        """
+        Build the PDF report (internal method).
+        
+        Args:
+            output_path: Path to output PDF file
+            figs_dir: Directory containing figure files
+            
+        Returns:
+            Path to generated PDF file
+        """
         print(f"Building PDF: {output_path}")
+        
+        # Build story (content)
+        styles = getSampleStyleSheet()
+        
+        # Prepare left column content
+        left_story = self._prepare_left_story(styles)
         
         # Create canvas directly (like ReportBuild.py)
         c = canvas.Canvas(str(output_path), pagesize=LETTER)
@@ -674,58 +922,151 @@ class EquityReportGenerator:
         # Use fallback font if primary not available
         header_font = self._get_font_name(header_font_family, self.font_secondary_fallbacks)
         
+        # Draw logo in top-left corner with vertical line and "Research" text
+        logo_path = self.header_config.get('logo_path', 'front/figs/logo.png')
+        logo_path_obj = Path(logo_path)
+        if not logo_path_obj.is_absolute():
+            # Relative to project root - use stored project_root from __init__
+            if hasattr(self, '_project_root'):
+                project_root = self._project_root
+            else:
+                # Fallback: try to get from current file location
+                try:
+                    current_file = Path(__file__)
+                    if current_file.exists():
+                        project_root = current_file.parent.parent
+                    else:
+                        project_root = Path.cwd()
+                except:
+                    project_root = Path.cwd()
+            logo_path_obj = project_root / logo_path
+        
+        # Initialize variables for right side alignment
+        logo_center_y = None
+        right_text_y = None
+        
+        if logo_path_obj.exists():
+            try:
+                logo_img = Image(str(logo_path_obj))
+                # Get original image dimensions
+                original_width = logo_img.imageWidth
+                original_height = logo_img.imageHeight
+                
+                # Scale logo to 2x the original size (was 35, now 70 points height - half of 4x)
+                logo_height = 35 * 2  # 70 points (half of previous 140)
+                # Calculate width maintaining aspect ratio
+                logo_width = logo_height * (original_width / original_height)
+                
+                # Set both dimensions explicitly
+                logo_img.drawWidth = logo_width
+                logo_img.drawHeight = logo_height
+                
+                # Draw logo at top-left corner (moved to page top)
+                logo_y = self.page_height - logo_height - 5  # Move to very top, just 5 points from edge
+                logo_img.drawOn(c, self.margin_left, logo_y)
+                
+                # Calculate "Research" text position - center it vertically with logo
+                c.setFont(header_font, header_font_size)
+                c.setFillColor(header_color)
+                research_text = "Research"
+                logo_center_y = self.page_height - logo_height / 2 - 5
+                
+                # Calculate vertical line - make it longer and center "Research" with it
+                line_x = self.margin_left + logo_img.drawWidth + 8
+                # Make line longer (about 1.5x the text height)
+                line_height = header_font_size * 1.5  # Longer line
+                line_center_y = logo_center_y  # Center line with logo center
+                line_y_top = line_center_y + line_height / 2
+                line_y_bottom = line_center_y - line_height / 2
+                
+                # Draw vertical line first
+                c.setStrokeColor(header_color)
+                c.setLineWidth(0.5)
+                c.line(line_x, line_y_bottom, line_x, line_y_top)
+                
+                # Draw "Research" text - center it vertically with the line
+                research_x = line_x + 8
+                # Center text vertically with the line (text baseline is at y, so adjust)
+                research_y = line_center_y - header_font_size / 2 + 2  # Adjust for text baseline
+                c.drawString(research_x, research_y, research_text)
+                
+                # Store logo_center_y for right side alignment
+                logo_center_y = logo_center_y
+            except Exception as e:
+                print(f"Warning: Could not load logo: {e}")
+                import traceback
+                traceback.print_exc()
+        else:
+            print(f"Warning: Logo not found at {logo_path_obj.absolute()}")
+        
+        # Right side: "North America Equity Research" in blue, with report date below in black
+        # Align with left side logo and "Research" text
+        right_text = self.header_config.get('right_text', 'North America Equity Research')
+        right_text_color_hex = self.header_config.get('right_text_color', self.brand_colors.get('primary', {}).get('hex', '#0060A0'))
+        right_text_color = HexColor(right_text_color_hex)
+        
+        # Get logo center Y position if logo was drawn, otherwise use default
+        if logo_center_y is not None:
+            # Align right text with logo center (where "Research" is)
+            right_text_y = logo_center_y + header_font_size / 2 - 2
+        else:
+            # Fallback: use position near page top
+            right_text_y = self.page_height - header_font_size - 5
+        
         c.setFont(header_font, header_font_size)
-        c.setFillColor(header_color)
+        c.setFillColor(right_text_color)
+        # Draw right text (blue) - aligned with "Research" text on left
+        c.drawRightString(self.page_width - self.margin_right, right_text_y, right_text)
         
-        # Left text: brand name
-        left_text = self.header_config.get('left_text', f'{self.brand_name} | Research')
-        c.drawString(self.margin_left, self.page_height - self.margin_top + 10, left_text)
-        
-        # Center text: report type (if specified)
-        center_text = self.header_config.get('center_text', 'North America Equity Research')
-        if center_text:
-            c.drawCentredString(self.page_width / 2, self.page_height - self.margin_top + 10, center_text)
-        
-        # Right text: report date
+        # Report date below right text (black, smaller) - aligned lower
         report_date_format = self.config.get('inputs', {}).get('source_report', {}).get('report_date')
         if report_date_format:
             # Parse date from config if provided
             try:
                 report_date = datetime.strptime(report_date_format, '%Y-%m-%d')
-                right_text = report_date.strftime('%d %B %Y')
+                report_date_str = report_date.strftime('%d %B %Y')
             except:
-                right_text = datetime.now().strftime('%d %B %Y')
+                report_date_str = datetime.now().strftime('%d %B %Y')
         else:
-            right_text = datetime.now().strftime('%d %B %Y')
+            report_date_str = datetime.now().strftime('%d %B %Y')
         
-        right_text_config = self.header_config.get('right_text')
-        if right_text_config:
-            right_text = right_text_config
+        report_date_font_size = self.header_config.get('report_date_font_size_pt', 7)
+        report_date_color_hex = self.header_config.get('report_date_color', '#111111')
+        report_date_color = HexColor(report_date_color_hex)
         
-        c.drawRightString(self.page_width - self.margin_right, self.page_height - self.margin_top + 10, right_text)
+        # Position date below the right text, with spacing
+        if logo_center_y is not None:
+            # Align date lower, below the right text
+            date_y = right_text_y - header_font_size - 3
+        else:
+            # Fallback: use default position
+            date_y = self.page_height - self.margin_top - 5
         
-        # Draw divider line below header (from config)
-        divider_config = self.header_config.get('divider', {})
-        if divider_config.get('show', True):
-            divider_color_hex = divider_config.get('color', '#E6E6E6')
-            divider_thickness = divider_config.get('thickness_pt', 0.75)
-            c.setStrokeColor(HexColor(divider_color_hex))
-            c.setLineWidth(divider_thickness)
-            c.line(self.margin_left, self.page_height - self.margin_top, 
-                   self.page_width - self.margin_right, self.page_height - self.margin_top)
+        c.setFont(header_font, report_date_font_size)
+        c.setFillColor(report_date_color)
+        c.drawRightString(self.page_width - self.margin_right, date_y, report_date_str)
+        
+        # Remove divider line below header (user requested to delete the grey line)
         
         # Define frame dimensions (similar to ReportBuild.py)
-        right_frame_width = 185  # Fixed width for right column (in points)
-        left_frame_width = self.page_width - self.margin_right - right_frame_width - self.margin_left
-        right_frame_x = self.page_width - self.margin_right - right_frame_width
-        frame_height = self.page_height - self.margin_top - self.margin_bottom - 95  # Reserve space for header
+        # Get gutter width from config, default to 0.35 inches, reduce to 2/3 of current
+        gutter_in = self.layout.get('page', {}).get('grid', {}).get('gutter_in', 0.35)
+        gutter_pts = gutter_in * 72 * (2/3)  # Convert to points and reduce to 2/3 of original
         
-        # Draw vertical divider line between columns
-        c.setStrokeColor(self.color_light_grey)
-        c.setLineWidth(0.5)
-        c.line(right_frame_x, self.margin_bottom, right_frame_x, self.page_height - self.margin_top - 95)
+        right_frame_width = 185  # Fixed width for right column (in points)
+        # Add gutter space between columns (reduced to 2/3)
+        left_frame_width = self.page_width - self.margin_right - right_frame_width - self.margin_left - gutter_pts
+        right_frame_x = self.page_width - self.margin_right - right_frame_width
+        
+        # Reduce header reserve space from 95 to 1/3 (about 32 points) to bring content closer to top
+        header_reserve = 95 / 3  # Reduce to 1/3 of original
+        frame_height = self.page_height - self.margin_top - self.margin_bottom - header_reserve  # Reduced header space
+        
+        # Remove vertical divider line - just leave white space (gutter reduced to 2/3)
         
         # Create left frame for text content (like ReportBuild.py)
+        # Start frame higher up (reduce top margin by reducing header_reserve)
+        frame_top_y = self.page_height - self.margin_top - header_reserve
         frame_left = Frame(
             x1=self.margin_left,
             y1=self.margin_bottom,
@@ -746,7 +1087,33 @@ class EquityReportGenerator:
         
         # Draw right column content on first page (like ReportBuild.py)
         # This needs to be done BEFORE frame_left.addFromList to ensure it's on the first page
-        right_y = self.page_height - self.margin_top - 95 - 20
+        # Calculate headline Y position to align NEUTRAL with headline
+        # Frame starts at: frame_top_y = self.page_height - self.margin_top - header_reserve
+        frame_top_y = self.page_height - self.margin_top - header_reserve
+        
+        # Calculate left column content positions:
+        # 1. Company name: title_style (font_size: 24, line_height: 1.15, spaceAfter: 12)
+        h1_config = self.typography.get('scale', {}).get('h1', {})
+        company_name_font_size = h1_config.get('font_size_pt', 24)
+        company_name_line_height = h1_config.get('line_height', 1.15)
+        company_name_height = company_name_font_size * company_name_line_height
+        company_name_space_after = 12  # From title_style spaceAfter
+        
+        # 2. Headline: headline_style (font_size: 14, line_height: 1.2)
+        h2_config = self.typography.get('scale', {}).get('h2', {})
+        headline_font_size = h2_config.get('font_size_pt', 14)
+        headline_line_height = h2_config.get('line_height', 1.2)
+        headline_height = headline_font_size * headline_line_height
+        
+        # Headline baseline Y position (from top of frame, going down)
+        # Company name takes: company_name_height (leading) + company_name_space_after
+        # Headline baseline is at: company_name_height + company_name_space_after + (headline_font_size * 0.75)
+        # 0.75 accounts for baseline position within the font (baseline is typically ~75% down from top of font)
+        headline_baseline_offset = company_name_height + company_name_space_after + (headline_font_size * 0.75)
+        headline_y = frame_top_y - headline_baseline_offset
+        
+        # Align NEUTRAL with headline baseline
+        right_y = headline_y
         
         # Rating and price info - use brand colors
         rating_font = self._get_font_name(self.font_primary, self.font_primary_fallbacks)
@@ -779,38 +1146,48 @@ class EquityReportGenerator:
         c.drawString(right_frame_x + 4, right_y, "Autos & Auto Parts")
         right_y -= 15
         
-        # Analyst contact from config
+        # Analyst contact from config - show all analysts
         author_section = self.config.get('inputs', {}).get('author_section', {})
         analysts = author_section.get('analysts', [])
         
         if analysts:
-            # Use first analyst as primary contact
-            primary_analyst = analysts[0]
             analyst_font = self._get_font_name(
                 author_section.get('typography', {}).get('name_font', {}).get('family', self.font_primary),
                 self.font_primary_fallbacks
             )
             analyst_font_size = author_section.get('typography', {}).get('name_font', {}).get('size_pt', 9)
+            role_font_size = author_section.get('typography', {}).get('role_font', {}).get('size_pt', 8.5)
+            contact_font_size = author_section.get('typography', {}).get('contact_font', {}).get('size_pt', 8)
             
-            c.setFont(analyst_font, analyst_font_size)
-            c.setFillColor(self.color_text)
-            
-            analyst_info = [
-                f"{primary_analyst.get('name', 'Analyst')}, {primary_analyst.get('role', 'AC')}",
-                primary_analyst.get('phone', '+1-212-555-1234'),
-                primary_analyst.get('email', f'analyst@{self.brand_name.lower().replace(" ", "")}.com')
-            ]
+            # Display all analysts - name only (bold), no role/title
+            for analyst in analysts:
+                # Name only (bold) - no role/title
+                c.setFont(f'{analyst_font}-Bold' if analyst_font == 'Helvetica' else analyst_font, analyst_font_size)
+                c.setFillColor(self.color_text)
+                analyst_name = analyst.get('name', 'Analyst')
+                c.drawString(right_frame_x + 4, right_y, analyst_name)
+                right_y -= 12
+                
+                # Phone
+                c.setFont(header_font, contact_font_size)
+                c.setFillColor(HexColor(author_section.get('typography', {}).get('contact_font', {}).get('color', '#7A7A7A')))
+                c.drawString(right_frame_x + 4, right_y, analyst.get('phone', '+1-212-555-1234'))
+                right_y -= 10
+                
+                # Email
+                c.drawString(right_frame_x + 4, right_y, analyst.get('email', f'analyst@{self.brand_name.lower().replace(" ", "")}.com'))
+                right_y -= 12
             
             # Add legal entity if configured
             if author_section.get('show_legal_entity', False):
                 legal_entity = author_section.get('legal_entity', {})
                 if legal_entity.get('name'):
-                    analyst_info.append(legal_entity['name'])
+                    c.setFont(header_font, contact_font_size)
+                    c.setFillColor(HexColor(author_section.get('typography', {}).get('contact_font', {}).get('color', '#7A7A7A')))
+                    c.drawString(right_frame_x + 4, right_y, legal_entity['name'])
+                    right_y -= 10
             
-            for info in analyst_info:
-                c.drawString(right_frame_x + 4, right_y, info)
-                right_y -= 10
-            right_y -= 10
+            right_y -= 5
         else:
             # Fallback if no analysts in config
             c.setFont(self._get_font_name(self.font_secondary, self.font_secondary_fallbacks), 8)
@@ -840,11 +1217,17 @@ class EquityReportGenerator:
                 
                 if price_perf_path_obj.exists():
                     try:
-                        right_y -= 15
-                        c.setFont(f'{body_font}-Bold' if body_font == 'Helvetica' else body_font, 9)
-                        c.setFillColor(self.color_dark_grey)  # Use dark grey for section titles
-                        c.drawString(right_frame_x + 4, right_y, "Price Performance")
-                        right_y -= 12
+                        # Draw title with light grey background (like ReportBuild.py)
+                        price_perf_title = self._draw_frame_title(
+                            "Price Performance",
+                            self.color_light_grey,  # Light grey background from config
+                            right_frame_width - 4,
+                            body_font
+                        )
+                        title_width, title_height = price_perf_title.wrap(0, 0)
+                        right_y -= title_height + 3  # Reduced spacing
+                        price_perf_title.drawOn(c, right_frame_x + 2, right_y)
+                        right_y -= 3  # Reduced spacing
                         
                         # Load image and get raw dimensions (like ReportBuild.py)
                         img = Image(str(price_perf_path_obj))
@@ -859,7 +1242,7 @@ class EquityReportGenerator:
                         if right_y - img.drawHeight > self.margin_bottom + 20:
                             # Draw image at calculated position (like ReportBuild.py)
                             img.drawOn(c, right_frame_x + 4, right_y - img.drawHeight)
-                            right_y -= img.drawHeight + 15
+                            right_y -= img.drawHeight + 10
                         else:
                             print(f"Warning: Not enough space for price performance graph (need {img.drawHeight:.1f}, have {right_y - self.margin_bottom:.1f})")
                     except Exception as e:
@@ -879,11 +1262,17 @@ class EquityReportGenerator:
                 
                 if company_data_path_obj.exists():
                     try:
-                        right_y -= 15
-                        c.setFont(f'{body_font}-Bold' if body_font == 'Helvetica' else body_font, 9)
-                        c.setFillColor(self.color_dark_grey)  # Use dark grey for section titles
-                        c.drawString(right_frame_x + 4, right_y, "Company Data")
-                        right_y -= 12
+                        # Draw title with light grey background (like ReportBuild.py)
+                        company_data_title = self._draw_frame_title(
+                            "Company Data",
+                            self.color_light_grey,  # Light grey background from config
+                            right_frame_width - 4,
+                            body_font
+                        )
+                        title_width, title_height = company_data_title.wrap(0, 0)
+                        right_y -= title_height + 3  # Reduced spacing
+                        company_data_title.drawOn(c, right_frame_x + 2, right_y)
+                        right_y -= 3  # Reduced spacing
                         
                         # Load image and get raw dimensions (like ReportBuild.py)
                         img = Image(str(company_data_path_obj))
@@ -936,6 +1325,50 @@ class EquityReportGenerator:
         
         print(f"Report generated successfully: {output_path}")
         return str(output_path)
+    
+    def regenerate_report_from_folder(self, base_dir_path: str, output_filename: str = None) -> str:
+        """
+        Regenerate report using existing files in a folder.
+        
+        Args:
+            base_dir_path: Path to existing folder (e.g., 'reports/Tesla Inc_20260119_195917')
+            output_filename: Output filename (default: auto-generated)
+            
+        Returns:
+            Path to generated PDF file
+        """
+        base_dir = Path(base_dir_path)
+        if not base_dir.exists():
+            raise ValueError(f"Folder not found: {base_dir_path}")
+        
+        figs_dir = base_dir / "figs"
+        report_dir = base_dir / "report"
+        analysts_dir = base_dir / "analysts"
+        
+        # Load analysis result from analysts folder if exists
+        analysis_json_path = analysts_dir / 'analysis_result.json'
+        if analysis_json_path.exists():
+            with open(analysis_json_path, 'r', encoding='utf-8') as f:
+                self.analysis_result = json.load(f)
+            print(f"Loaded analysis result from {analysis_json_path}")
+        
+        # Load existing images from figs folder
+        self.fig_paths = {}
+        if (figs_dir / 'graph_price_performance.png').exists():
+            self.fig_paths['price_performance'] = str(figs_dir / 'graph_price_performance.png')
+        if (figs_dir / 'table_company_data.png').exists():
+            self.fig_paths['company_data_table'] = str(figs_dir / 'table_company_data.png')
+        if (figs_dir / 'table_key_metrics.png').exists():
+            self.fig_paths['key_metrics_table'] = str(figs_dir / 'table_key_metrics.png')
+        
+        # Set output filename - save PDF in report/ directory (overwrite existing)
+        if not output_filename:
+            output_filename = f"{self.ticker}_equity_report.pdf"
+        
+        output_path = report_dir / output_filename
+        
+        # Build and save PDF (reuse the _build_pdf method)
+        return self._build_pdf(output_path, figs_dir)
 
 
 def main():

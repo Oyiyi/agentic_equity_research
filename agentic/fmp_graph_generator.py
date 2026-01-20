@@ -13,6 +13,7 @@ import os
 import sys
 import sqlite3
 import json
+import yaml
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, Dict, List
@@ -28,6 +29,54 @@ sys.path.insert(0, str(project_root))
 
 # Database path (following existing pattern)
 DEFAULT_DB_PATH = project_root / 'finrpt' / 'source' / 'cache.db'
+
+
+def load_graph_config(config_path: str = None) -> Dict:
+    """
+    Load graph color palette configuration from config.yaml.
+    
+    Args:
+        config_path: Path to config.yaml. If None, uses project_root/config.yaml.
+        
+    Returns:
+        Dictionary with graph palette configuration, or default values if not found.
+    """
+    if config_path is None:
+        config_path = project_root / 'config.yaml'
+    else:
+        config_path = Path(config_path)
+    
+    if config_path.exists():
+        try:
+            with open(config_path, 'r', encoding='utf-8') as f:
+                config = yaml.safe_load(f)
+                return config.get('components', {}).get('report_graph_palette', {})
+        except Exception as e:
+            print(f"Warning: Could not load graph config: {e}")
+    
+    # Return default values if config not found
+    return {
+        'base': {
+            'background': '#FFFFFF',
+            'grid': '#E6E6E6',
+            'axis': '#333333',
+            'text_primary': '#111111',
+            'text_secondary': '#666666'
+        },
+        'series': {
+            'benchmark': {
+                'name': 'Benchmark / Index',
+                'color': '#1F77B4',
+                'linestyle': '-',
+                'linewidth': 2.2
+            }
+        },
+        'bar_chart': {
+            'primary': '#1F77B4',
+            'secondary': '#2CB1A1',
+            'contrast': '#D4A32F'
+        }
+    }
 
 
 def load_price_performance_data(
@@ -260,7 +309,8 @@ def plot_price_performance(
     start_date: str,
     end_date: str,
     save_path: str = './figs',
-    db_path: str = None
+    db_path: str = None,
+    config_path: str = None
 ) -> Optional[str]:
     """
     Generate price performance graph comparing stock vs base index.
@@ -271,6 +321,7 @@ def plot_price_performance(
         end_date: End date in YYYY-MM-DD format
         save_path: Directory to save the graph
         db_path: Path to database. If None, uses default.
+        config_path: Path to config.yaml for color palette. If None, uses default.
         
     Returns:
         Path to saved graph file, or None on error.
@@ -278,6 +329,12 @@ def plot_price_performance(
     data = load_price_performance_data(ticker, start_date, end_date, db_path)
     if not data:
         return None
+    
+    # Load graph color palette from config
+    graph_config = load_graph_config(config_path)
+    base_config = graph_config.get('base', {})
+    series_config = graph_config.get('series', {})
+    benchmark_config = series_config.get('benchmark', {})
     
     stock_data = data['stock_data']
     index_data = data['index_data']
@@ -295,18 +352,37 @@ def plot_price_performance(
     stock_df.set_index('date', inplace=True)
     index_df.set_index('date', inplace=True)
     
-    # Create figure
-    plt.figure(figsize=(12, 7))
+    # Create figure with background color from config
+    fig = plt.figure(figsize=(12, 7), facecolor=base_config.get('background', '#FFFFFF'))
+    ax = plt.gca()
+    ax.set_facecolor(base_config.get('background', '#FFFFFF'))
     
-    # Plot rebased close prices
+    # Get colors from config - use bar_chart primary for stock, benchmark color for index
+    bar_chart_config = graph_config.get('bar_chart', {})
+    stock_color = bar_chart_config.get('primary', '#1F77B4')  # Use primary blue for stock
+    index_color = benchmark_config.get('color', '#1F77B4')  # Use benchmark color for index
+    
+    # If two lines, use primary and secondary from bar_chart
+    if bar_chart_config.get('secondary'):
+        # Use primary for stock, secondary for index (or use benchmark color if available)
+        stock_color = bar_chart_config.get('primary', '#1F77B4')
+        index_color = benchmark_config.get('color', bar_chart_config.get('secondary', '#2CB1A1'))
+    
+    # Plot rebased close prices with colors from config
+    linewidth = benchmark_config.get('linewidth', 2.2)
+    linestyle = benchmark_config.get('linestyle', '-')
+    
     plt.plot(stock_df.index, stock_df['rebased_close'], 
-             label=ticker, color='#9E1F00', linewidth=3)
+             label=ticker, color=stock_color, linewidth=linewidth, linestyle=linestyle)
     plt.plot(index_df.index, index_df['rebased_close'], 
-             label=base_index, color='#d45716', linewidth=3)
+             label=base_index, color=index_color, linewidth=linewidth, linestyle=linestyle)
     
-    # Formatting
-    plt.xlabel('Date', fontsize=14, color='#6a6a6a')
-    plt.ylabel('Rebased Price (Base = 100)', fontsize=14, color='#6a6a6a', fontweight='bold')
+    # Formatting with colors from config
+    text_secondary = base_config.get('text_secondary', '#666666')
+    axis_color = base_config.get('axis', '#333333')
+    
+    plt.xlabel('Date', fontsize=14, color=text_secondary)
+    plt.ylabel('Rebased Price (Base = 100)', fontsize=14, color=text_secondary, fontweight='bold')
     # Title removed as requested
     
     # Format x-axis dates
@@ -316,17 +392,17 @@ def plot_price_performance(
     # Format y-axis
     plt.gca().yaxis.set_major_formatter(FuncFormatter(lambda y, _: f'{y:.0f}'))
     
-    # Legend
-    plt.legend(loc='upper left', fontsize=12, frameon=False, labelcolor='#6a6a6a')
+    # Legend with config colors
+    plt.legend(loc='upper left', fontsize=12, frameon=False, labelcolor=text_secondary)
     
-    # Grid and spines
-    plt.grid(visible=True, alpha=0.3, linestyle='--')
-    ax = plt.gca()
+    # Grid and spines with config colors
+    grid_color = base_config.get('grid', '#E6E6E6')
+    plt.grid(visible=True, alpha=0.3, linestyle='--', color=grid_color)
     ax.spines['top'].set_visible(False)
     ax.spines['right'].set_visible(False)
-    ax.spines['left'].set_color('#6a6a6a')
-    ax.spines['bottom'].set_color('#6a6a6a')
-    ax.tick_params(colors='#6a6a6a', labelsize=11)
+    ax.spines['left'].set_color(axis_color)
+    ax.spines['bottom'].set_color(axis_color)
+    ax.tick_params(colors=axis_color, labelsize=11)
     
     plt.tight_layout()
     
@@ -334,7 +410,7 @@ def plot_price_performance(
     save_dir = Path(save_path)
     save_dir.mkdir(parents=True, exist_ok=True)
     plot_path = save_dir / 'graph_price_performance.png'
-    plt.savefig(plot_path, dpi=300, bbox_inches='tight')
+    plt.savefig(plot_path, dpi=300, bbox_inches='tight', facecolor=base_config.get('background', '#FFFFFF'))
     plt.close()
     
     print(f"Price performance graph saved to {plot_path}")
@@ -764,7 +840,8 @@ def plot_analyst_ratings(
     ticker: str,
     as_of_date: str,
     save_path: str = './figs',
-    db_path: str = None
+    db_path: str = None,
+    config_path: str = None
 ) -> Optional[str]:
     """
     Generate analyst ratings distribution graph.
@@ -787,6 +864,12 @@ def plot_analyst_ratings(
     consensus = data.get('consensus_rating', 'N/A')
     num_analysts = data.get('num_analysts', 0)
     
+    # Load graph color palette from config
+    graph_config = load_graph_config(config_path)
+    base_config = graph_config.get('base', {})
+    classification_config = graph_config.get('classification', {})
+    bar_chart_config = graph_config.get('bar_chart', {})
+    
     # Prepare data for plotting
     labels = ['Strong Buy', 'Buy', 'Hold', 'Sell', 'Strong Sell']
     values = [
@@ -801,12 +884,13 @@ def plot_analyst_ratings(
     plot_labels = []
     plot_values = []
     colors = []
+    # Use classification colors from config
     color_map = {
-        'Strong Buy': '#2e7d32',
-        'Buy': '#66bb6a',
-        'Hold': '#ffa726',
-        'Sell': '#ef5350',
-        'Strong Sell': '#c62828'
+        'Strong Buy': classification_config.get('positive', {}).get('color', '#2CB1A1'),
+        'Buy': classification_config.get('moderate', {}).get('color', '#8FD3C7'),
+        'Hold': classification_config.get('unknown', {}).get('color', '#BDBDBD'),
+        'Sell': classification_config.get('negative', {}).get('color', '#C84C5A'),
+        'Strong Sell': classification_config.get('negative', {}).get('color', '#C84C5A')
     }
     
     for label, value in zip(labels, values):
@@ -819,41 +903,51 @@ def plot_analyst_ratings(
         print("No analyst ratings to plot")
         return None
     
-    # Create figure
+    # Create figure with config background
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
+    fig.patch.set_facecolor(base_config.get('background', '#FFFFFF'))
+    ax1.set_facecolor(base_config.get('background', '#FFFFFF'))
+    ax2.set_facecolor(base_config.get('background', '#FFFFFF'))
     
-    # Bar chart
-    bars = ax1.bar(plot_labels, plot_values, color=colors, alpha=0.8, edgecolor='#6a6a6a', linewidth=1.5)
-    ax1.set_ylabel('Number of Analysts', fontsize=12, color='#6a6a6a', fontweight='bold')
+    # Get colors from config
+    text_secondary = base_config.get('text_secondary', '#666666')
+    axis_color = base_config.get('axis', '#333333')
+    edge_color = base_config.get('grid', '#E6E6E6')
+    
+    # Bar chart with config colors
+    bars = ax1.bar(plot_labels, plot_values, color=colors, alpha=0.8, 
+                   edgecolor=edge_color, linewidth=1.5)
+    ax1.set_ylabel('Number of Analysts', fontsize=12, color=text_secondary, fontweight='bold')
     ax1.set_title(f'Analyst Ratings Distribution\nConsensus: {consensus} ({num_analysts} analysts)', 
-                  fontsize=13, fontweight='bold', color='#6a6a6a')
-    ax1.tick_params(colors='#6a6a6a', labelsize=10)
+                  fontsize=13, fontweight='bold', color=text_secondary)
+    ax1.tick_params(colors=axis_color, labelsize=10)
     ax1.spines['top'].set_visible(False)
     ax1.spines['right'].set_visible(False)
-    ax1.spines['left'].set_color('#6a6a6a')
-    ax1.spines['bottom'].set_color('#6a6a6a')
+    ax1.spines['left'].set_color(axis_color)
+    ax1.spines['bottom'].set_color(axis_color)
     
     # Add value labels on bars
     for bar in bars:
         height = bar.get_height()
         ax1.text(bar.get_x() + bar.get_width()/2., height,
                 f'{int(height)}',
-                ha='center', va='bottom', fontsize=11, color='#6a6a6a', fontweight='bold')
+                ha='center', va='bottom', fontsize=11, color=text_secondary, fontweight='bold')
     
-    # Pie chart
+    # Pie chart with config colors
     if sum(plot_values) > 0:
         wedges, texts, autotexts = ax2.pie(plot_values, labels=plot_labels, colors=colors,
                                            autopct='%1.1f%%', startangle=90,
-                                           textprops={'fontsize': 10, 'color': '#6a6a6a'})
-        ax2.set_title('Rating Distribution (%)', fontsize=13, fontweight='bold', color='#6a6a6a')
+                                           textprops={'fontsize': 10, 'color': text_secondary})
+        ax2.set_title('Rating Distribution (%)', fontsize=13, fontweight='bold', color=text_secondary)
     
     plt.tight_layout()
     
-    # Save figure
+    # Save figure with config background
     save_dir = Path(save_path)
     save_dir.mkdir(parents=True, exist_ok=True)
     plot_path = save_dir / f'{ticker}_analyst_ratings.png'
-    plt.savefig(plot_path, dpi=300, bbox_inches='tight')
+    plt.savefig(plot_path, dpi=300, bbox_inches='tight', 
+                facecolor=base_config.get('background', '#FFFFFF'))
     plt.close()
     
     print(f"Analyst ratings graph saved to {plot_path}")
@@ -864,7 +958,8 @@ def plot_company_metrics(
     ticker: str,
     as_of_date: str,
     save_path: str = './figs',
-    db_path: str = None
+    db_path: str = None,
+    config_path: str = None
 ) -> Optional[str]:
     """
     Generate company metrics visualization.
@@ -882,10 +977,28 @@ def plot_company_metrics(
     if not data:
         return None
     
+    # Load graph color palette from config
+    graph_config = load_graph_config(config_path)
+    base_config = graph_config.get('base', {})
+    classification_config = graph_config.get('classification', {})
+    bar_chart_config = graph_config.get('bar_chart', {})
+    annotations_config = graph_config.get('annotations', {})
+    
+    # Get colors from config
+    text_secondary = base_config.get('text_secondary', '#666666')
+    axis_color = base_config.get('axis', '#333333')
+    grid_color = base_config.get('grid', '#E6E6E6')
+    background_color = base_config.get('background', '#FFFFFF')
+    
     # Create figure with subplots
     fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+    fig.patch.set_facecolor(background_color)
     fig.suptitle(f'{ticker} Key Metrics (as of {as_of_date})', 
-                 fontsize=16, fontweight='bold', color='#6a6a6a')
+                 fontsize=16, fontweight='bold', color=text_secondary)
+    
+    # Set background for all subplots
+    for ax in axes.flat:
+        ax.set_facecolor(background_color)
     
     # 1. Price Range (52W High/Low)
     ax1 = axes[0, 0]
@@ -894,18 +1007,23 @@ def plot_company_metrics(
     if high > 0 and low > 0:
         price_range = high - low
         current_pos = (high + low) / 2  # Approximate current position
-        ax1.barh(['52W Range'], [price_range], left=low, color='#9E1F00', alpha=0.6)
-        ax1.axvline(x=high, color='#d45716', linestyle='--', linewidth=2, label='52W High')
-        ax1.axvline(x=low, color='#d45716', linestyle='--', linewidth=2, label='52W Low')
-        ax1.axvline(x=current_pos, color='#2e7d32', linewidth=3, label='Approx Current')
-        ax1.set_xlabel('Price ($)', fontsize=11, color='#6a6a6a')
-        ax1.set_title('52-Week Price Range', fontsize=12, fontweight='bold', color='#6a6a6a')
+        # Use bar_chart colors
+        primary_color = bar_chart_config.get('primary', '#1F77B4')
+        secondary_color = bar_chart_config.get('secondary', '#2CB1A1')
+        contrast_color = bar_chart_config.get('contrast', '#D4A32F')
+        
+        ax1.barh(['52W Range'], [price_range], left=low, color=primary_color, alpha=0.6)
+        ax1.axvline(x=high, color=contrast_color, linestyle='--', linewidth=2, label='52W High')
+        ax1.axvline(x=low, color=contrast_color, linestyle='--', linewidth=2, label='52W Low')
+        ax1.axvline(x=current_pos, color=secondary_color, linewidth=3, label='Approx Current')
+        ax1.set_xlabel('Price ($)', fontsize=11, color=text_secondary)
+        ax1.set_title('52-Week Price Range', fontsize=12, fontweight='bold', color=text_secondary)
         ax1.legend(fontsize=9, frameon=False)
-        ax1.tick_params(colors='#6a6a6a', labelsize=10)
+        ax1.tick_params(colors=axis_color, labelsize=10)
         ax1.spines['top'].set_visible(False)
         ax1.spines['right'].set_visible(False)
-        ax1.spines['left'].set_color('#6a6a6a')
-        ax1.spines['bottom'].set_color('#6a6a6a')
+        ax1.spines['left'].set_color(axis_color)
+        ax1.spines['bottom'].set_color(axis_color)
     
     # 2. Market Metrics
     ax2 = axes[0, 1]
@@ -914,21 +1032,24 @@ def plot_company_metrics(
         'Avg Daily Vol\n(3M, USD)': data.get('avg_daily_volume_3m_usd', 0) / 1e6,  # Convert to millions
     }
     if metrics['Market Cap'] > 0:
-        bars = ax2.bar(metrics.keys(), metrics.values(), color=['#9E1F00', '#d45716'], alpha=0.8)
-        ax2.set_ylabel('Value (Billions/Millions)', fontsize=11, color='#6a6a6a', fontweight='bold')
-        ax2.set_title('Market Metrics', fontsize=12, fontweight='bold', color='#6a6a6a')
-        ax2.tick_params(colors='#6a6a6a', labelsize=9)
+        # Use bar_chart primary and secondary colors
+        bar_colors = [bar_chart_config.get('primary', '#1F77B4'), 
+                     bar_chart_config.get('secondary', '#2CB1A1')]
+        bars = ax2.bar(metrics.keys(), metrics.values(), color=bar_colors, alpha=0.8)
+        ax2.set_ylabel('Value (Billions/Millions)', fontsize=11, color=text_secondary, fontweight='bold')
+        ax2.set_title('Market Metrics', fontsize=12, fontweight='bold', color=text_secondary)
+        ax2.tick_params(colors=axis_color, labelsize=9)
         ax2.spines['top'].set_visible(False)
         ax2.spines['right'].set_visible(False)
-        ax2.spines['left'].set_color('#6a6a6a')
-        ax2.spines['bottom'].set_color('#6a6a6a')
+        ax2.spines['left'].set_color(axis_color)
+        ax2.spines['bottom'].set_color(axis_color)
         
         # Add value labels
         for bar in bars:
             height = bar.get_height()
             ax2.text(bar.get_x() + bar.get_width()/2., height,
                     f'${height:.1f}',
-                    ha='center', va='bottom', fontsize=9, color='#6a6a6a', fontweight='bold')
+                    ha='center', va='bottom', fontsize=9, color=text_secondary, fontweight='bold')
     
     # 3. Volatility
     ax3 = axes[1, 0]
@@ -937,7 +1058,13 @@ def plot_company_metrics(
         # Create a gauge-like visualization
         categories = ['Low', 'Medium', 'High', 'Very High']
         thresholds = [0, 15, 30, 50, 100]
-        colors_vol = ['#2e7d32', '#ffa726', '#ef5350', '#c62828']
+        # Use classification colors from config
+        colors_vol = [
+            classification_config.get('positive', {}).get('color', '#2CB1A1'),
+            classification_config.get('moderate', {}).get('color', '#8FD3C7'),
+            classification_config.get('negative', {}).get('color', '#C84C5A'),
+            classification_config.get('negative', {}).get('color', '#C84C5A')
+        ]
         
         # Find which category volatility falls into
         category_idx = 0
@@ -950,23 +1077,23 @@ def plot_company_metrics(
         
         # Bar showing volatility level
         ax3.barh(['90-Day Volatility'], [volatility], color=colors_vol[category_idx], alpha=0.8)
-        ax3.axvline(x=15, color='#6a6a6a', linestyle='--', alpha=0.5, linewidth=1)
-        ax3.axvline(x=30, color='#6a6a6a', linestyle='--', alpha=0.5, linewidth=1)
-        ax3.axvline(x=50, color='#6a6a6a', linestyle='--', alpha=0.5, linewidth=1)
-        ax3.set_xlabel('Volatility (%)', fontsize=11, color='#6a6a6a')
+        ax3.axvline(x=15, color=grid_color, linestyle='--', alpha=0.5, linewidth=1)
+        ax3.axvline(x=30, color=grid_color, linestyle='--', alpha=0.5, linewidth=1)
+        ax3.axvline(x=50, color=grid_color, linestyle='--', alpha=0.5, linewidth=1)
+        ax3.set_xlabel('Volatility (%)', fontsize=11, color=text_secondary)
         ax3.set_title(f'Volatility: {categories[category_idx]}', 
-                     fontsize=12, fontweight='bold', color='#6a6a6a')
+                     fontsize=12, fontweight='bold', color=text_secondary)
         ax3.set_xlim(0, max(volatility * 1.2, 50))
-        ax3.tick_params(colors='#6a6a6a', labelsize=10)
+        ax3.tick_params(colors=axis_color, labelsize=10)
         ax3.spines['top'].set_visible(False)
         ax3.spines['right'].set_visible(False)
-        ax3.spines['left'].set_color('#6a6a6a')
-        ax3.spines['bottom'].set_color('#6a6a6a')
+        ax3.spines['left'].set_color(axis_color)
+        ax3.spines['bottom'].set_color(axis_color)
         
         # Add value label
         ax3.text(volatility, 0, f'{volatility:.2f}%',
-                ha='left', va='center', fontsize=11, color='#6a6a6a', fontweight='bold',
-                bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
+                ha='left', va='center', fontsize=11, color=text_secondary, fontweight='bold',
+                bbox=dict(boxstyle='round', facecolor=background_color, alpha=0.8))
     
     # 4. Share Information
     ax4 = axes[1, 1]
@@ -975,15 +1102,18 @@ def plot_company_metrics(
         'Free Float\n(%)': data.get('free_float_pct', 0),
     }
     if share_info['Shares\nOutstanding'] > 0:
+        # Use bar_chart primary and secondary colors
+        bar_colors = [bar_chart_config.get('primary', '#1F77B4'), 
+                     bar_chart_config.get('secondary', '#2CB1A1')]
         bars = ax4.bar(share_info.keys(), share_info.values(), 
-                      color=['#9E1F00', '#d45716'], alpha=0.8)
-        ax4.set_ylabel('Value', fontsize=11, color='#6a6a6a', fontweight='bold')
-        ax4.set_title('Share Information', fontsize=12, fontweight='bold', color='#6a6a6a')
-        ax4.tick_params(colors='#6a6a6a', labelsize=9)
+                      color=bar_colors, alpha=0.8)
+        ax4.set_ylabel('Value', fontsize=11, color=text_secondary, fontweight='bold')
+        ax4.set_title('Share Information', fontsize=12, fontweight='bold', color=text_secondary)
+        ax4.tick_params(colors=axis_color, labelsize=9)
         ax4.spines['top'].set_visible(False)
         ax4.spines['right'].set_visible(False)
-        ax4.spines['left'].set_color('#6a6a6a')
-        ax4.spines['bottom'].set_color('#6a6a6a')
+        ax4.spines['left'].set_color(axis_color)
+        ax4.spines['bottom'].set_color(axis_color)
         
         # Add value labels
         for i, (key, value) in enumerate(share_info.items()):
@@ -992,15 +1122,16 @@ def plot_company_metrics(
             else:
                 label = f'{value:.1f}%'
             ax4.text(i, value, label,
-                    ha='center', va='bottom', fontsize=9, color='#6a6a6a', fontweight='bold')
+                    ha='center', va='bottom', fontsize=9, color=text_secondary, fontweight='bold')
     
     plt.tight_layout()
     
-    # Save figure
+    # Save figure with config background
     save_dir = Path(save_path)
     save_dir.mkdir(parents=True, exist_ok=True)
     plot_path = save_dir / f'{ticker}_company_metrics.png'
-    plt.savefig(plot_path, dpi=300, bbox_inches='tight')
+    plt.savefig(plot_path, dpi=300, bbox_inches='tight', 
+                facecolor=background_color)
     plt.close()
     
     print(f"Company metrics graph saved to {plot_path}")
@@ -1665,7 +1796,8 @@ def generate_all_graphs(
     end_date: str = None,
     as_of_date: str = None,
     base_save_path: str = './figs',
-    db_path: str = None
+    db_path: str = None,
+    config_path: str = None
 ) -> Dict[str, Optional[str]]:
     """
     Generate price performance graph and company data table for a ticker.
@@ -1709,7 +1841,7 @@ def generate_all_graphs(
     # Generate price performance graph
     print(f"\nGenerating price performance graph for {ticker}...")
     results['price_performance'] = plot_price_performance(
-        ticker, start_date, end_date, str(save_path), db_path
+        ticker, start_date, end_date, str(save_path), db_path, config_path=config_path
     )
     
     # Generate company data table

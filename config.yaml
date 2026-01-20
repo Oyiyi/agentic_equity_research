@@ -9,6 +9,39 @@ inputs:
     report_date: "2025-01-30"
     ticker: "TSLA"
 
+  analyst_analysis:
+    # Analysis paragraph configuration
+    num_paragraphs: 4  # Number of analysis paragraphs (changed from 3 to 4)
+    paragraph_length:
+      min_words_per_paragraph: 60  # Minimum words per paragraph
+      max_words_per_paragraph: 100  # Maximum words per paragraph
+      target_words_per_paragraph: 80  # Target words per paragraph
+      min_chars_per_paragraph: 400  # Minimum characters per paragraph
+      max_chars_per_paragraph: 600  # Maximum characters per paragraph
+      target_chars_per_paragraph: 500  # Target characters per paragraph
+    paragraph_topics:
+      - "Context and key observations about recent performance/events"
+      - "Deep dive into financial fundamentals and trends"
+      - "Investment thesis and recommendation rationale"
+      - "Risk assessment and market outlook"  # New 4th paragraph
+    
+    # Key points configuration (used for headline generation)
+    key_points:
+      num_points: 3  # Number of key points to generate
+      length_multiplier: 1.75  # Make key points 1.5-2x longer (1.75 = average)
+      prompt: |
+        Generate 3 concise but descriptive key points that capture the most important investment insights.
+        Each key point should be 1.5 to 2 times longer than typical bullet points, providing enough detail
+        to be meaningful when combined into a headline. Focus on:
+        - Financial performance highlights (margins, growth rates, profitability trends)
+        - Key business drivers or headwinds
+        - Investment thesis summary points
+        Each point should be a complete phrase or short sentence (not just keywords), typically 8-15 words.
+        Examples of good key points:
+        - "Stable performance with consistent net and EBITDA margins despite market volatility"
+        - "Sluggish revenue growth rate raises concerns about near-term expansion prospects"
+        - "Strong cash generation and balance sheet position support dividend sustainability"
+
   author_section:
     heading_label: "Morgan Stanley Research Analysts"
     layout: "stacked"
@@ -140,7 +173,11 @@ layout:
   header:
     show: true
     left_text: "Morgan Stanley | Research"
-    right_text: "M Global Insight"
+    logo_path: "front/figs/logo.png"
+    right_text: "North America Equity Research"
+    right_text_color: "#0060A0"  # MS Blue
+    report_date_font_size_pt: 7
+    report_date_color: "#111111"  # Black
     font_family: "Roboto"
     font_size_pt: 8
     color: "#4A4A4A"
@@ -212,6 +249,53 @@ components:
       font_family: "Roboto"
       font_size_pt: 8
       color: "#4A4A4A"
+
+  report_graph_palette:
+    base:
+      background: "#FFFFFF"
+      grid: "#E6E6E6"
+      axis: "#333333"
+      text_primary: "#111111"
+      text_secondary: "#666666"
+
+    series:
+      benchmark:
+        name: "Benchmark / Index"
+        color: "#1F77B4"      # MS-style blue
+        linestyle: "-"
+        linewidth: 2.2
+
+      exposure:
+        name: "AI Exposure"
+        color: "#D4A32F"      # mustard gold
+        linestyle: "-"
+        linewidth: 2.2
+
+      materiality:
+        name: "AI Materiality"
+        color: "#2CB1A1"      # teal green
+        linestyle: "-"
+        linewidth: 2.2
+
+    classification:
+      positive:
+        color: "#2CB1A1"      # Core / Significant
+      moderate:
+        color: "#8FD3C7"
+      negative:
+        color: "#C84C5A"      # Disrupted / Downside
+      unknown:
+        color: "#BDBDBD"
+
+    bar_chart:
+      primary: "#1F77B4"
+      secondary: "#2CB1A1"
+      contrast: "#D4A32F"
+
+    annotations:
+      upside_arrow: "#2CB1A1"
+      downside_arrow: "#C84C5A"
+      divider: "#CCCCCC"
 
   table_style:
     header:

@@ -14,6 +14,7 @@ import os
 import sys
 import sqlite3
 import json
+import yaml
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, Dict, List, Tuple
@@ -51,7 +52,8 @@ class AnalystAgent:
         max_rounds: int = 3,
         db_path: str = None,
         log_path: str = None,
-        save_path: str = None
+        save_path: str = None,
+        config_path: str = None
     ):
         """
         Initialize the Analyst Agent.
@@ -63,6 +65,7 @@ class AnalystAgent:
             db_path: Path to database. If None, uses default.
             log_path: Path to log file for memory/scratch paper. If None, uses default.
             save_path: Base directory to save analysis results. If None, uses './reports'.
+            config_path: Path to config.yaml. If None, uses project_root/config.yaml.
         """
         self.model = OpenAIModel(
             model_name=model_name or os.getenv('OPENAI_MODEL', 'gpt-4'),
@@ -73,6 +76,37 @@ class AnalystAgent:
         self.save_path = Path(save_path) if save_path else project_root / 'reports'
         self.model_name = model_name or os.getenv('OPENAI_MODEL', 'gpt-4')
         
+        # Load configuration from config.yaml
+        if config_path is None:
+            config_path = project_root / 'config.yaml'
+        else:
+            config_path = Path(config_path)
+        
+        if config_path.exists():
+            with open(config_path, 'r', encoding='utf-8') as f:
+                self.config = yaml.safe_load(f)
+        else:
+            self.config = {}
+            print(f"Warning: Config file not found at {config_path}, using defaults")
+        
+        # Get analysis configuration from config
+        analyst_config = self.config.get('inputs', {}).get('analyst_analysis', {})
+        self.num_paragraphs = analyst_config.get('num_paragraphs', 4)  # Default to 4 paragraphs
+        self.paragraph_length = analyst_config.get('paragraph_length', {})
+        self.paragraph_topics = analyst_config.get('paragraph_topics', [
+            "Context and key observations about recent performance/events",
+            "Deep dive into financial fundamentals and trends",
+            "Investment thesis and recommendation rationale",
+            "Risk assessment and market outlook"
+        ])
+        
+        # Get key points configuration from config
+        key_points_config = analyst_config.get('key_points', {})
+        self.key_points_num = key_points_config.get('num_points', 3)
+        self.key_points_length_multiplier = key_points_config.get('length_multiplier', 1.75)
+        self.key_points_prompt = key_points_config.get('prompt', 
+            "Generate 3 concise but descriptive key points that capture the most important investment insights.")
+        
         # Set up log file for memory/scratch paper
         if log_path is None:
             log_dir = project_root / 'agentic' / 'logs'
@@ -81,18 +115,17 @@ class AnalystAgent:
         self.log_path = Path(log_path)
         self.memory = []  # In-memory scratch paper
         
-        # System prompt for equity research analyst
-        self.system_prompt = """You are a senior equity research analyst at a leading investment bank. 
+        # Build system prompt dynamically based on config
+        topics_list = "\n   - ".join([f"Paragraph {i+1}: {topic}" for i, topic in enumerate(self.paragraph_topics[:self.num_paragraphs])])
+        self.system_prompt = f"""You are a senior equity research analyst at a leading investment bank. 
 Your role is to provide comprehensive, data-driven investment analysis and recommendations.
 
 Key Responsibilities:
 1. Analyze all available financial data, market data, and company information
 2. Identify key trends, strengths, and risks
 3. Provide clear investment recommendation: OVERWEIGHT, NEUTRAL, or UNDERWEIGHT
-4. Write a compelling 3-paragraph analysis that:
-   - First paragraph: Context and key observations about recent performance/events
-   - Second paragraph: Deep dive into financial fundamentals and trends
-   - Third paragraph: Investment thesis and recommendation rationale
+4. Write a compelling {self.num_paragraphs}-paragraph analysis that:
+   - {topics_list}
 
 Your analysis should be:
 - Data-driven and evidence-based
@@ -339,24 +372,48 @@ Always base your recommendations on fundamental analysis, not speculation."""
         prompt_parts.append("\n## Analysis Task\n")
         prompt_parts.append("Based on all the data above, provide:")
         prompt_parts.append("1. Investment Recommendation: OVERWEIGHT, NEUTRAL, or UNDERWEIGHT")
-        prompt_parts.append("2. A 3-paragraph analysis covering:")
-        prompt_parts.append("   - Paragraph 1: Context and key observations about recent performance/events")
-        prompt_parts.append("   - Paragraph 2: Deep dive into financial fundamentals and trends")
-        prompt_parts.append("   - Paragraph 3: Investment thesis and recommendation rationale")
+        prompt_parts.append(f"2. A {self.num_paragraphs}-paragraph analysis covering:")
+        
+        # Add paragraph topics from config
+        for i, topic in enumerate(self.paragraph_topics[:self.num_paragraphs], 1):
+            prompt_parts.append(f"   - Paragraph {i}: {topic}")
+        
+        # Add word/character length requirements from config
+        if self.paragraph_length:
+            target_words = self.paragraph_length.get('target_words_per_paragraph', 80)
+            min_words = self.paragraph_length.get('min_words_per_paragraph', 60)
+            max_words = self.paragraph_length.get('max_words_per_paragraph', 100)
+            target_chars = self.paragraph_length.get('target_chars_per_paragraph', 500)
+            min_chars = self.paragraph_length.get('min_chars_per_paragraph', 400)
+            max_chars = self.paragraph_length.get('max_chars_per_paragraph', 600)
+            
+            prompt_parts.append(f"\nLength Requirements (per paragraph):")
+            prompt_parts.append(f"   - Target: {target_words} words ({target_chars} characters)")
+            prompt_parts.append(f"   - Range: {min_words}-{max_words} words ({min_chars}-{max_chars} characters)")
+            prompt_parts.append(f"   - Total target: {target_words * self.num_paragraphs} words ({target_chars * self.num_paragraphs} characters) across all {self.num_paragraphs} paragraphs")
+        
+        # Add key points requirements from config
+        prompt_parts.append(f"\n3. Key Points ({self.key_points_num} points):")
+        prompt_parts.append(self.key_points_prompt)
+        prompt_parts.append(f"\n   - Each key point should be approximately {self.key_points_length_multiplier}x longer than typical bullet points")
+        prompt_parts.append(f"   - Target length: 8-15 words per key point (1.5-2x longer than short phrases)")
+        prompt_parts.append(f"   - These will be used to generate the report headline, so they should be descriptive and meaningful")
+        
         prompt_parts.append("\nReturn your response as a JSON object with the following structure:")
-        prompt_parts.append("""
-{
+        
+        # Build JSON structure dynamically based on num_paragraphs and key_points_num
+        paragraph_keys = ", ".join([f'"paragraph_{i}": "..."' for i in range(1, self.num_paragraphs + 1)])
+        key_points_example = ", ".join([f'"point{i}"' for i in range(1, self.key_points_num + 1)])
+        json_structure = f"""{{
   "recommendation": "OVERWEIGHT" | "NEUTRAL" | "UNDERWEIGHT",
-  "analysis": {
-    "paragraph_1": "...",
-    "paragraph_2": "...",
-    "paragraph_3": "..."
-  },
-  "key_points": ["point1", "point2", "point3"],
+  "analysis": {{
+    {paragraph_keys}
+  }},
+  "key_points": [{key_points_example}],
   "risks": ["risk1", "risk2"],
   "catalysts": ["catalyst1", "catalyst2"]
-}
-""")
+}}"""
+        prompt_parts.append(json_structure)
         prompt_parts.append("\nImportant: Return ONLY valid JSON, no additional text or explanation.")
         
         return "\n".join(prompt_parts)
@@ -484,9 +541,7 @@ Always base your recommendations on fundamental analysis, not speculation."""
             error_result = {
                 'recommendation': 'N/A',
                 'analysis': {
-                    'paragraph_1': 'Analysis failed to generate.',
-                    'paragraph_2': 'Please check data availability and try again.',
-                    'paragraph_3': 'Error occurred during analysis.'
+                    **{f'paragraph_{i}': f'Analysis failed to generate (paragraph {i}).' for i in range(1, self.num_paragraphs + 1)}
                 },
                 'rounds_completed': 0,
                 'log_path': str(self.log_path),
@@ -553,12 +608,9 @@ Always base your recommendations on fundamental analysis, not speculation."""
                 
                 if 'analysis' in result:
                     analysis = result['analysis']
-                    f.write("Paragraph 1:\n")
-                    f.write(analysis.get('paragraph_1', 'N/A') + "\n\n")
-                    f.write("Paragraph 2:\n")
-                    f.write(analysis.get('paragraph_2', 'N/A') + "\n\n")
-                    f.write("Paragraph 3:\n")
-                    f.write(analysis.get('paragraph_3', 'N/A') + "\n\n")
+                    for i in range(1, self.num_paragraphs + 1):
+                        f.write(f"Paragraph {i}:\n")
+                        f.write(analysis.get(f'paragraph_{i}', 'N/A') + "\n\n")
                 
                 if 'key_points' in result and result['key_points']:
                     f.write("=" * 60 + "\n")
@@ -644,9 +696,8 @@ def main():
         print("Analysis")
         print("=" * 60)
         analysis = result['analysis']
-        print(f"\nParagraph 1:\n{analysis.get('paragraph_1', 'N/A')}")
-        print(f"\nParagraph 2:\n{analysis.get('paragraph_2', 'N/A')}")
-        print(f"\nParagraph 3:\n{analysis.get('paragraph_3', 'N/A')}")
+        for i in range(1, self.num_paragraphs + 1):
+            print(f"\nParagraph {i}:\n{analysis.get(f'paragraph_{i}', 'N/A')}")
     
     if 'key_points' in result:
         print("\n" + "=" * 60)
