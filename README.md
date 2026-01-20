@@ -113,6 +113,17 @@ reports/
           └── analysis_result.txt
 ```
 
+#### Example Report
+
+Here's an example of a generated equity research report for Tesla Inc. (TSLA):
+
+**Report Preview (First Page):**
+
+![TSLA Equity Research Report](reports/TSLA_20260119_230955/report/TSLA_equity_report_preview.png)
+
+**Full Report:** [Download TSLA Equity Research Report PDF](reports/TSLA_20260119_230955/report/TSLA_equity_report.pdf)
+
+
 ## 📊 Features
 
 - **Multi-Agent Framework**: Specialized agents for different aspects of equity analysis
@@ -137,7 +148,7 @@ The system follows a structured multi-step workflow to generate comprehensive eq
 │  │   ├── Company Data (market cap, shares, etc.)       │
 │  │   ├── Financial Statements (income, balance, CF)    │
 │  │   └── Key Metrics (calculated from statements)      │
-│  └── Save to cache database (finrpt/source/cache.db)   │
+│  └── Save to cache database (data/cache.db)            │
 └─────────────────────────────────────────────────────────┘
 ```
 
