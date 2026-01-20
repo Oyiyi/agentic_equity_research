@@ -86,7 +86,7 @@ class EquityReportGenerator:
         Args:
             ticker: Stock ticker symbol
             company_name: Company name (default: uses ticker)
-            db_path: Path to database (default: finrpt/source/cache.db)
+            db_path: Path to database (default: data/cache.db)
             output_dir: Directory to save reports (default: ./reports)
             model_name: OpenAI model name for analyst agent
             config_path: Path to config.yaml (default: project_root/config.yaml)

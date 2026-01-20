@@ -30,8 +30,8 @@ if env_path.exists():
 else:
     dotenv.load_dotenv(override=True)
 
-# Database path (following existing pattern)
-DEFAULT_DB_PATH = project_root / 'finrpt' / 'source' / 'cache.db'
+# Database path
+DEFAULT_DB_PATH = project_root / 'data' / 'cache.db'
 
 
 def load_all_data_from_cache(

@@ -5,9 +5,9 @@ inputs:
   source_report:
     provider: "Morgan Stanley"
     type: "equity_research_pdf"
-    file: "Modified-AAPL-Report 2.pdf"
-    report_date: "2026-01-13"
-    ticker: "AAPL"
+    file: "Modified-TESLA-Report 2.pdf"
+    report_date: "2026-01-10"
+    ticker: "TSLA"
     industry: "Consumer Electronics"  # Industry sector for the company
 
   analyst_analysis:

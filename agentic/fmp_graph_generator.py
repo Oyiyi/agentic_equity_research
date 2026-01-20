@@ -27,8 +27,8 @@ import numpy as np
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-# Database path (following existing pattern)
-DEFAULT_DB_PATH = project_root / 'finrpt' / 'source' / 'cache.db'
+# Database path
+DEFAULT_DB_PATH = project_root / 'data' / 'cache.db'
 
 
 def load_graph_config(config_path: str = None) -> Dict:

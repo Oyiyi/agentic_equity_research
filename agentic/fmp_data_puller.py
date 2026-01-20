@@ -38,8 +38,8 @@ FMP_API_KEY = os.getenv('FMP_API_KEY')
 if not FMP_API_KEY:
     raise ValueError("FMP_API_KEY not found in .env file. Please add FMP_API_KEY=your_key to .env")
 
-# Database path (following existing pattern)
-DEFAULT_DB_PATH = project_root / 'finrpt' / 'source' / 'cache.db'
+# Database path
+DEFAULT_DB_PATH = project_root / 'data' / 'cache.db'
 
 
 def init_tables(db_path: str = None) -> None:
@@ -1406,7 +1406,7 @@ def pull_tesla_data(
         end_date: End date for price performance (default: today)
         start_date: Start date for price performance (default: today - 1 year)
         as_of_date: Date for company data snapshot (default: today)
-        db_path: Path to database (default: finrpt/source/cache.db)
+            db_path: Path to database (default: data/cache.db)
         
     Returns:
         Dictionary with 'price_performance' and 'company_data' keys

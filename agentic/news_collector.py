@@ -38,8 +38,8 @@ if not FINNHUB_API_KEY:
     print("Warning: FINNHUB_API_KEY not found in .env file. Please add FINNHUB_API_KEY=your_key to .env")
     print("News collection will be skipped.")
 
-# Database path (following existing pattern)
-DEFAULT_DB_PATH = project_root / 'finrpt' / 'source' / 'cache.db'
+# Database path
+DEFAULT_DB_PATH = project_root / 'data' / 'cache.db'
 
 
 def init_news_table(db_path: str = None) -> None:
