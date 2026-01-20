@@ -36,25 +36,6 @@ Multi-agent system for equity report generation:
 - `fmp_graph_generator.py` - Financial charts and tables generation
 - `run_equity_report.py` - Main entry point for report generation
 
-### Dataset Processing (`dataset/`)
-Tools for processing and managing equity research datasets:
-- Data alignment and processing
-- Report generation and filtering
-- Statistics and validation utilities
-
-### Core Modules (`finrpt/module/`)
-Core analysis and report generation modules:
-- `FinancialsAnalyzer.py` - Financial statement analysis
-- `NewsAnalyzer.py` - News sentiment and analysis
-- `Predictor.py` - Financial predictions
-- `RiskAssessor.py` - Risk assessment
-- `ReportBuild.py` - Report building utilities
-
-### Data Source (`finrpt/source/`)
-Data collection and caching infrastructure:
-- Database initialization and management
-- Data insertion and querying
-- Caching mechanisms for API data
 
 ### Frontend (`front/`)
 Web interface for report generation:

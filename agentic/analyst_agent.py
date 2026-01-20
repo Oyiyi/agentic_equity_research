@@ -25,7 +25,7 @@ project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
 # Import OpenAI model
-from finrpt.module.OpenAI import OpenAIModel
+from agentic.openai_model import OpenAIModel
 
 # Import data loading functions
 from agentic.financial_forecastor_agent import load_all_data_from_cache

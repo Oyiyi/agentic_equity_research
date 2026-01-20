@@ -21,7 +21,7 @@ project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
 # Import OpenAI model
-from finrpt.module.OpenAI import OpenAIModel
+from agentic.openai_model import OpenAIModel
 
 # Load .env file
 env_path = project_root / '.env'
