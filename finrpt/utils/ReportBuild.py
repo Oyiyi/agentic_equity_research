@@ -17,79 +17,21 @@ import os
 import pdb
 import json
 import yaml
+from pathlib import Path
+try:
+    from agentic.fmp_graph_generator import generate_all_graphs
+    FMP_GRAPH_GENERATOR_AVAILABLE = True
+except ImportError:
+    FMP_GRAPH_GENERATOR_AVAILABLE = False
+    print("Warning: fmp_graph_generator not available, skipping FMP table generation")
 
 
-FINE2C = {
-    'Tax Effect Of Unusual Items': '异常项目的税收影响',
-    'Tax Rate For Calcs': '计算用税率',
-    'Normalized EBITDA': '标准化息税折旧摊销前利润',
-    'Total Unusual Items': '总异常项目',
-    'Total Unusual Items Excluding Goodwill': '不含商誉的总异常项目',
-    'Net Income From Continuing Operation Net Minority Interest': '持续经营净收入（扣除少数股东权益）',
-    'Reconciled Cost Of Revenue': '调整后的收入成本',
-    'EBITDA': '息税折旧摊销前利润',
-    'EBIT': '息税前利润',
-    'Net Interest Income': '净利息收入',
-    'Interest Expense': '利息支出',
-    'Interest Income': '利息收入',
-    'Normalized Income': '标准化收入',
-    'Net Income From Continuing And Discontinued Operation': '持续和非持续经营净收入',
-    'Total Expenses': '总费用',
-    'Total Operating Income As Reported': '报告的总营业收入',
-    'Diluted Average Shares': '稀释平均股数',
-    'Basic Average Shares': '基本平均股数',
-    'Diluted EPS': '稀释每股收益',
-    'Basic EPS': '基本每股收益',
-    'Net Income Common Stockholders': '普通股股东净收入',
-    'Otherunder Preferred Stock Dividend': '优先股股息下的其他',
-    'Net Income': '净收入',
-    'Minority Interests': '少数股东权益',
-    'Net Income Including Noncontrolling Interests': '包括非控股权益的净收入',
-    'Net Income Continuous Operations': '持续经营净收入',
-    'Tax Provision': '税项准备',
-    'Pretax Income': '税前收入',
-    'Other Non Operating Income Expenses': '其他非经营性收入费用',
-    'Special Income Charges': '特殊收入费用',
-    'Other Special Charges': '其他特殊费用',
-    'Write Off': '核销',
-    'Net Non Operating Interest Income Expense': '净非经营性利息收入费用',
-    'Total Other Finance Cost': '其他财务费用总计',
-    'Interest Expense Non Operating': '非经营性利息支出',
-    'Interest Income Non Operating': '非经营性利息收入',
-    'Operating Income': '营业收入',
-    'Operating Expense': '营业费用',
-    'Other Operating Expenses': '其他营业费用',
-    'Research And Development': '研发费用',
-    'Selling General And Administration': '销售、一般及行政费用',
-    'Selling And Marketing Expense': '销售和营销费用',
-    'General And Administrative Expense': '一般及行政费用',
-    'Gross Profit': '毛利润',
-    'Cost Of Revenue': '收入成本',
-    'Total Revenue': '总收入',
-    'Operating Revenue': '营业收入'
-}
+# FINE2C and TARGETMAP are no longer used - all financial data comes from agentic modules as PNG tables
+# Keeping these for reference but they are not actively used in the report generation
+FINE2C = {}  # Deprecated - not used
+TARGETMAP = {}  # Deprecated - not used
 
-TARGETMAP = {
-    'Total Revenue': '总收入(百万元)',
-    'Net Income': '净收入(百万元)',
-    'EBITDA': '息税前利润(百万元)',
-    'Gross Profit': '毛利润(百万元)',
-    'Operating Income': '营业收入(百万元)',
-    'Net Income From Continuing Operation Net Minority Interest': '持续经营净收入(百万元)',
-    'Operating Expense': '营业费用(百万元)',
-    'Pretax Income': '税前收入(百万元)',
-    'Tax Provision': '税项准备(百万元)',
-    'EBIT': '息税前利润(百万元)',
-    'Cost Of Revenue': '收入成本(百万元)',
-    'Total Operating Income As Reported': '报告的总营业收入(百万元)',
-    'Net Income Including Noncontrolling Interests': '包括非控股权益的净收入(百万元)'
-}
-
-BASE_key_mapping = {
-    '6m avg daily vol (CNYmn)': '日均成交量(百万元)',
-    'Closing Price (CNY)': '收盘价(元)',
-    '52 Week Price Range (CNY)': '52周价格范围(元)'
-}
+# BASE_key_mapping removed - keys from get_key_data() are already in English
 
 
 def load_config(config_path='config.yaml'):
@@ -120,18 +62,58 @@ def hex_to_color(hex_color):
     return colors.black
 
 
+def map_to_builtin_font(font_name):
+    """Map any font name to a built-in ReportLab font"""
+    if not font_name:
+        return 'Helvetica'
+    
+    font_lower = font_name.lower()
+    
+    # Check if already a built-in font
+    if font_name in ['Helvetica', 'Times-Roman', 'Courier']:
+        return font_name
+    
+    # Map common fonts to built-ins
+    if 'arial' in font_lower or 'helvetica' in font_lower or 'roboto' in font_lower or 'sans' in font_lower:
+        return 'Helvetica'
+    elif 'times' in font_lower or 'georgia' in font_lower or 'serif' in font_lower or 'gloriola' in font_lower:
+        return 'Times-Roman'
+    elif 'courier' in font_lower or 'monospace' in font_lower:
+        return 'Courier'
+    else:
+        return 'Helvetica'  # Default fallback
+
+
 def get_font_name(config, font_key='primary_family'):
-    """Get font name from config with fallback"""
+    """Get font name from config with fallback to built-in ReportLab fonts"""
     if not config or 'typography' not in config:
         return 'Helvetica'
     
     typo = config['typography']
     if font_key in typo:
         font_info = typo[font_key]
-        if isinstance(font_info, dict) and 'name' in font_info:
-            return font_info['name']
+        font_name = None
+        fallbacks = []
+        
+        if isinstance(font_info, dict):
+            font_name = font_info.get('name')
+            fallbacks = font_info.get('fallbacks', [])
         elif isinstance(font_info, str):
-            return font_info
+            font_name = font_info
+        
+        # Try the primary font name first
+        if font_name:
+            mapped = map_to_builtin_font(font_name)
+            if mapped:
+                return mapped
+        
+        # Try fallbacks in order
+        for fallback in fallbacks:
+            mapped = map_to_builtin_font(fallback)
+            if mapped:
+                return mapped
+    
+    # Default to Helvetica
     return 'Helvetica'
 
 
@@ -304,13 +286,14 @@ class BulletParagraph(Flowable):
             line_height = 1.35
             text_color = colors.black
         
+        # More condensed spacing for bullet paragraphs
         custom_style = ParagraphStyle(
             'CustomStyle',
             parent=styles['Normal'],
             fontName=font_name,  
             fontSize=font_size,
-            leading=font_size * line_height,
-            spaceAfter=12,
+            leading=font_size * max(line_height - 0.2, 1.1),  # Tighter line spacing
+            spaceAfter=6,  # Reduced from 12 to 6
             textColor=text_color,
             alignment=0  
         )
@@ -335,12 +318,13 @@ def draw_frame_title(text, set_color, col_width, font_name, config=None):
     # Get table header style from config
     if config and 'components' in config and 'table_style' in config['components']:
         header_style = config['components']['table_style'].get('header', {})
-        header_font = header_style.get('font_family', font_name)
+        header_font_raw = header_style.get('font_family', font_name)
+        header_font = map_to_builtin_font(header_font_raw)
         header_size = header_style.get('font_size_pt', 12)
         header_weight = header_style.get('font_weight', 700)
         text_color = hex_to_color(header_style.get('text_color', '#FFFFFF'))
     else:
-        header_font = font_name
+        header_font = map_to_builtin_font(font_name)
         header_size = 12
         header_weight = 700
         text_color = colors.white
@@ -411,10 +395,12 @@ def get_financias_table(font_name, data, config=None):
         
         header_fill = hex_to_color(header_style.get('fill', '#0060A0'))
         header_text_color = hex_to_color(header_style.get('text_color', '#FFFFFF'))
-        header_font = header_style.get('font_family', font_name)
+        header_font_raw = header_style.get('font_family', font_name)
+        header_font = map_to_builtin_font(header_font_raw)
         header_size = header_style.get('font_size_pt', 8)
         
-        body_font = body_style.get('font_family', font_name)
+        body_font_raw = body_style.get('font_family', font_name)
+        body_font = map_to_builtin_font(body_font_raw)
         body_size = body_style.get('font_size_pt', 8)
         body_text_color = hex_to_color(body_style.get('text_color', '#111111'))
         zebra_stripes = body_style.get('zebra_stripes', True)
@@ -467,18 +453,61 @@ def build_report(
     # Load configuration
     config = load_config(config_path)
     
-    figs_path = os.path.join(save_path, "figs")
-    if not os.path.exists(figs_path):
-        os.mkdir(figs_path)
-    get_share_performance(res_data, res_data['stock_code'], date, save_path=figs_path)
-    get_pe_eps_performance(res_data, res_data['stock_code'], date, save_path=figs_path)
-    get_revenue_performance(res_data, res_data['stock_code'], date, save_path=figs_path)
-    share_performance_image_path = os.path.join(figs_path, "share_performance.png")
-    pe_eps_performance_image_path = os.path.join(figs_path, "pe_eps.png")
-    revenue_performance_image_path = os.path.join(figs_path, "revenue_performance.png")
-    
-    company_name = res_data['company_name']
+    company_name = res_data.get('company_name', res_data.get('stock_code', 'Unknown'))
     stock_code = res_data['stock_code']
+    
+    # Use figs folder from save_path (generated by EP.py)
+    # This ensures we use the same folder that EP.py created, avoiding duplicate folders
+    save_figs_path = os.path.join(save_path, "figs")
+    if not os.path.exists(save_figs_path):
+        os.makedirs(save_figs_path)
+    
+    # Use save_path/figs as the primary figs path
+    figs_path = Path(save_figs_path)
+    
+    # Note: FMP tables and graphs should already be generated by EP.py
+    # We only generate legacy charts here if they don't exist
+    # Convert figs_path to string for path operations
+    figs_path_str = str(figs_path)
+    
+    # Generate legacy charts only if they don't exist (EP.py may have already generated them)
+    share_performance_image_path = os.path.join(figs_path_str, "share_performance.png")
+    pe_eps_performance_image_path = os.path.join(figs_path_str, "pe_eps.png")
+    revenue_performance_image_path = os.path.join(figs_path_str, "revenue_performance.png")
+    
+    if not os.path.exists(share_performance_image_path):
+        get_share_performance(res_data, stock_code, date, save_path=figs_path_str)
+    if not os.path.exists(pe_eps_performance_image_path):
+        get_pe_eps_performance(res_data, stock_code, date, save_path=figs_path_str)
+    if not os.path.exists(revenue_performance_image_path):
+        get_revenue_performance(res_data, stock_code, date, save_path=figs_path_str)
+    # Check for graph_price_performance.png and table_company_data.png
+    graph_price_performance_path = os.path.join(figs_path_str, "graph_price_performance.png")
+    table_company_data_path = os.path.join(figs_path_str, "table_company_data.png")
+    table_key_metrics_path = os.path.join(figs_path_str, "table_key_metrics.png")
+    table_income_statement_path = os.path.join(figs_path_str, "table_income_statement.png")
+    table_balance_sheet_path = os.path.join(figs_path_str, "table_balance_sheet.png")
+    table_cash_flow_path = os.path.join(figs_path_str, "table_cash_flow_statement.png")
+    
+    # If graph_price_performance.png doesn't exist, fall back to share_performance.png
+    if not os.path.exists(graph_price_performance_path):
+        graph_price_performance_path = share_performance_image_path
+    
+    # Check for analyst agent analysis result
+    analyst_analysis = None
+    if 'analyst_analysis' in res_data:
+        analyst_analysis = res_data['analyst_analysis']
+    else:
+        # Try to load from saved analysis result file
+        analysis_result_path = os.path.join(save_path, 'analysis_result.json')
+        if os.path.exists(analysis_result_path):
+            try:
+                with open(analysis_result_path, 'r', encoding='utf-8') as f:
+                    analyst_analysis = json.load(f)
+            except:
+                pass
+    
+    # company_name and stock_code already set above
     
     # Get primary color from config
     if config and 'brand' in config and 'colors' in config['brand']:
@@ -531,7 +560,7 @@ def build_report(
 
     # Try to load logo, use multiple possible paths
     logo_paths = [
-        os.path.join(figs_path, "logo.png"),
+        os.path.join(figs_path_str, "logo.png"),
         "figs/logo.png",
         "./figs/logo.png",
         "../figs/logo.png",
@@ -564,7 +593,9 @@ def build_report(
     if config and 'layout' in config and 'header' in config['layout']:
         header_config = config['layout']['header']
         if header_config.get('show', True):
-            header_font = header_config.get('font_family', secondary_font)
+            # Use map_to_builtin_font to ensure fallback to built-in fonts
+            header_font_raw = header_config.get('font_family', secondary_font)
+            header_font = map_to_builtin_font(header_font_raw)
             header_size = header_config.get('font_size_pt', 8)
             header_color = hex_to_color(header_config.get('color', '#4A4A4A'))
             
@@ -613,24 +644,38 @@ def build_report(
     c.drawString(margin_left, page_height - margin_top - 50, f"{company_name}（{stock_code}）")
     c.drawString(margin_left + 180, page_height - margin_top - 50, f"{date}")
 
-    title = company_name + ":" + res_data['report_title'] if \
-        company_name not in res_data['report_title'] else res_data['report_title']
+    # Get title from config.yaml, fallback to res_data
+    if config and 'components' in config and 'title_block' in config['components']:
+        title_from_config = config['components']['title_block'].get('title', '')
+        if title_from_config:
+            title = title_from_config
+        else:
+            # Fallback to res_data if config title is empty
+            title = company_name + ":" + res_data.get('report_title', '') if \
+                company_name not in res_data.get('report_title', '') else res_data.get('report_title', '')
+    else:
+        # Fallback to res_data if no config
+        title = company_name + ":" + res_data.get('report_title', '') if \
+            company_name not in res_data.get('report_title', '') else res_data.get('report_title', '')
     
     # Get title style from config
     if config and 'components' in config and 'title_block' in config['components']:
         title_config = config['components']['title_block']['title_font']
-        title_font = title_config.get('family', font_name)
+        title_font_raw = title_config.get('family', font_name)
         title_size = title_config.get('size_pt', 24)
         title_color = hex_to_color(title_config.get('color', primary_color_hex))
     elif config and 'typography' in config and 'scale' in config['typography']:
         h1_style = config['typography']['scale'].get('h1', {})
-        title_font = h1_style.get('font_family', font_name)
+        title_font_raw = h1_style.get('font_family', font_name)
         title_size = h1_style.get('font_size_pt', 24)
         title_color = hex_to_color(h1_style.get('color', '#111111'))
     else:
-        title_font = font_name
+        title_font_raw = font_name
         title_size = 17
         title_color = color1
+    
+    # Map to built-in ReportLab font
+    title_font = map_to_builtin_font(title_font_raw) if title_font_raw else 'Times-Roman'
     
     title_style = ParagraphStyle(
         name='CustomStyle',
@@ -672,13 +717,19 @@ def build_report(
         rightPadding=4
     )
     
-    frame_title1 = draw_frame_title("核心观点", color1, left_frame_width - 8, font_name, config)
+    # Get section titles from config
+    section_titles = {}
+    if config and 'components' in config and 'section_titles' in config['components']:
+        section_titles = config['components']['section_titles']
+    
+    core_insights_title = section_titles.get('core_insights', 'Core Insights')
+    frame_title1 = draw_frame_title(core_insights_title, color1, left_frame_width - 8, font_name, config)
     frame_left_list.append(frame_title1)
     frame_left_list.append(Spacer(1, 4))
     
     # Try to find icon path
     icon_paths = [
-        os.path.join(figs_path, "icon.png"),
+        os.path.join(figs_path_str, "icon.png"),
         "figs/icon.png",
         "./figs/icon.png",
         "./finrpt/utils/figs/icon.png",
@@ -696,46 +747,140 @@ def build_report(
     else:
         accent_color_hex = '#9E1F00'
     
-    for sub_advisor in res_data["analyze_advisor"]:
-        paragraph_text = f'<font color="{accent_color_hex}"><b>{sub_advisor["title"]}：</b></font>{sub_advisor["content"]}'
-        try:
-            paragraph_advisor = BulletParagraph(icon_path, paragraph_text, font_name, config)
-        except:
-            # Fallback if icon not found
-            paragraph_advisor = Paragraph(paragraph_text.replace(f'<font color="{accent_color_hex}"><b>', '<b>').replace('</b></font>', '</b>'), 
-                                         ParagraphStyle(name='Custom', parent=styles['Normal'], fontName=font_name))
-        frame_left_list.append(paragraph_advisor)
-        frame_left_list.append(Spacer(1, 4))
+    # Use analyst agent analysis if available, otherwise fall back to analyze_advisor
+    if analyst_analysis and 'analysis' in analyst_analysis:
+        # Use the 3-paragraph analysis from analyst agent
+        analysis = analyst_analysis['analysis']
+        paragraphs = [
+            analysis.get('paragraph_1', ''),
+            analysis.get('paragraph_2', ''),
+            analysis.get('paragraph_3', '')
+        ]
+        for para in paragraphs:
+            if para:
+                paragraph_text = para
+                try:
+                    paragraph_advisor = BulletParagraph(icon_path, paragraph_text, font_name, config)
+                except:
+                    # Fallback if icon not found - use more condensed style
+                    para_style = ParagraphStyle(
+                        name='Custom', 
+                        parent=styles['Normal'], 
+                        fontName=font_name,
+                        fontSize=9,  # Smaller font
+                        leading=11,  # Tighter line spacing
+                        spaceAfter=3  # Less space after
+                    )
+                    paragraph_advisor = Paragraph(paragraph_text, para_style)
+                frame_left_list.append(paragraph_advisor)
+                frame_left_list.append(Spacer(1, 2))  # Reduced from 4 to 2
+    elif "analyze_advisor" in res_data:
+        # Fallback to original analyze_advisor format - more condensed
+        for sub_advisor in res_data["analyze_advisor"]:
+            paragraph_text = f'<font color="{accent_color_hex}"><b>{sub_advisor["title"]}: </b></font>{sub_advisor["content"]}'
+            try:
+                paragraph_advisor = BulletParagraph(icon_path, paragraph_text, font_name, config)
+            except:
+                # Fallback if icon not found - use more condensed style
+                para_style = ParagraphStyle(
+                    name='Custom', 
+                    parent=styles['Normal'], 
+                    fontName=font_name,
+                    fontSize=9,  # Smaller font
+                    leading=11,  # Tighter line spacing
+                    spaceAfter=3  # Less space after
+                )
+                paragraph_advisor = Paragraph(paragraph_text.replace(f'<font color="{accent_color_hex}"><b>', '<b>').replace('</b></font>', '</b>'), para_style)
+            frame_left_list.append(paragraph_advisor)
+            frame_left_list.append(Spacer(1, 2))  # Reduced from 4 to 2
         
     risk_assessment = ""
     for idx, risk in enumerate(res_data["analyze_risk"]):
         risk_assessment += "(" + str(idx + 1) + ")" + risk + ";"
-    paragraph_text = f'<font color="{accent_color_hex}"><b>风险评估：</b></font>{risk_assessment}'
+    risk_title = section_titles.get('risk_assessment', 'Risk Assessment')
+    paragraph_text = f'<font color="{accent_color_hex}"><b>{risk_title}: </b></font>{risk_assessment}'
     try:
         paragraph_advisor = BulletParagraph(icon_path, paragraph_text, font_name, config)
     except:
-        paragraph_advisor = Paragraph(paragraph_text.replace(f'<font color="{accent_color_hex}"><b>', '<b>').replace('</b></font>', '</b>'), 
-                                     ParagraphStyle(name='Custom', parent=styles['Normal'], fontName=font_name))
+        # More condensed style for risk assessment
+        para_style = ParagraphStyle(
+            name='Custom', 
+            parent=styles['Normal'], 
+            fontName=font_name,
+            fontSize=9,  # Smaller font
+            leading=11,  # Tighter line spacing
+            spaceAfter=3  # Less space after
+        )
+        paragraph_advisor = Paragraph(paragraph_text.replace(f'<font color="{accent_color_hex}"><b>', '<b>').replace('</b></font>', '</b>'), para_style)
     frame_left_list.append(paragraph_advisor)
-    frame_left_list.append(Spacer(1, 4))
+    frame_left_list.append(Spacer(1, 2))  # Reduced from 4 to 2
         
-    frame_title2 = draw_frame_title("财务数据", color1, left_frame_width - 8, font_name, config)
+    financial_data_title = section_titles.get('financial_data', 'Financial Data')
+    frame_title2 = draw_frame_title(financial_data_title, color1, left_frame_width - 8, font_name, config)
     frame_left_list.append(frame_title2)
     frame_left_list.append(Spacer(1, 5))
-    df = res_data["financials"]['stock_income']
     
-    # for akshare stock_income
-    df['日期'] = df['日期'].apply(lambda x: x[:-4] + '-' + x[4:6] + '-' + x[-2:])
-    df.set_index('日期', inplace=True)
-    df = df.head(4)
-    df = df.transpose()
-    df.reset_index(inplace=True)
-    df.rename(columns={'index': ''}, inplace=True)
+    # Add FMP tables if available (key metrics, income statement, balance sheet, cash flow)
     
-    table_data = []
-    table_data += [df.columns.to_list()] + df.values.tolist()
-    financias_table = get_financias_table(font_name, table_data, config)
-    frame_left_list.append(financias_table)
+    # Key Metrics Table
+    if os.path.exists(table_key_metrics_path):
+        key_metrics_title = section_titles.get('key_metrics', 'Key Metrics')
+        frame_title_key_metrics = draw_frame_title(key_metrics_title, color1, left_frame_width - 8, font_name, config)
+        frame_left_list.append(frame_title_key_metrics)
+        frame_left_list.append(Spacer(1, 3))
+        key_metrics_img = Image(table_key_metrics_path)
+        # Scale to fit frame width
+        key_metrics_img.drawWidth = left_frame_width - 8
+        key_metrics_img.drawHeight = key_metrics_img.drawWidth * (key_metrics_img.imageHeight / key_metrics_img.imageWidth)
+        frame_left_list.append(key_metrics_img)
+        frame_left_list.append(Spacer(1, 5))
+    
+    # Income Statement Table
+    if os.path.exists(table_income_statement_path):
+        income_title = section_titles.get('income_statement', 'Income Statement')
+        frame_title_income = draw_frame_title(income_title, color1, left_frame_width - 8, font_name, config)
+        frame_left_list.append(frame_title_income)
+        frame_left_list.append(Spacer(1, 3))
+        income_img = Image(table_income_statement_path)
+        income_img.drawWidth = left_frame_width - 8
+        income_img.drawHeight = income_img.drawWidth * (income_img.imageHeight / income_img.imageWidth)
+        frame_left_list.append(income_img)
+        frame_left_list.append(Spacer(1, 5))
+    
+    # Balance Sheet Table
+    if os.path.exists(table_balance_sheet_path):
+        balance_title = section_titles.get('balance_sheet', 'Balance Sheet')
+        frame_title_balance = draw_frame_title(balance_title, color1, left_frame_width - 8, font_name, config)
+        frame_left_list.append(frame_title_balance)
+        frame_left_list.append(Spacer(1, 3))
+        balance_img = Image(table_balance_sheet_path)
+        balance_img.drawWidth = left_frame_width - 8
+        balance_img.drawHeight = balance_img.drawWidth * (balance_img.imageHeight / balance_img.imageWidth)
+        frame_left_list.append(balance_img)
+        frame_left_list.append(Spacer(1, 5))
+    
+    # Cash Flow Statement Table
+    if os.path.exists(table_cash_flow_path):
+        cashflow_title = section_titles.get('cash_flow', 'Cash Flow Statement')
+        frame_title_cashflow = draw_frame_title(cashflow_title, color1, left_frame_width - 8, font_name, config)
+        frame_left_list.append(frame_title_cashflow)
+        frame_left_list.append(Spacer(1, 3))
+        cashflow_img = Image(table_cash_flow_path)
+        cashflow_img.drawWidth = left_frame_width - 8
+        cashflow_img.drawHeight = cashflow_img.drawWidth * (cashflow_img.imageHeight / cashflow_img.imageWidth)
+        frame_left_list.append(cashflow_img)
+        frame_left_list.append(Spacer(1, 5))
+    
+    # If no FMP tables are available, show a message
+    if not any([os.path.exists(table_key_metrics_path), os.path.exists(table_income_statement_path), 
+                os.path.exists(table_balance_sheet_path), os.path.exists(table_cash_flow_path)]):
+        # No financial data available - add a message
+        no_data_text = "Financial data not available"
+        no_data_para = Paragraph(no_data_text, 
+                                ParagraphStyle(name='Custom', parent=styles['Normal'], 
+                                             fontName=font_name, fontSize=9))
+        frame_left_list.append(no_data_para)
+    
     frame_left.addFromList(frame_left_list, c)
     
     
@@ -753,7 +898,8 @@ def build_report(
     )
     frame_right.addFromList(frame_right_list, c)
     
-    frame_title3 = draw_frame_title("作者", color1, right_frame_width - 4, font_name, config)
+    author_title = section_titles.get('author', 'Authors')
+    frame_title3 = draw_frame_title(author_title, color1, right_frame_width - 4, font_name, config)
     _1, _2 = frame_title3.wrap(0, 0)
     frame_title3.drawOn(c, right_frame_x + 2, page_height - margin_top - 95 - 21)
     
@@ -785,37 +931,148 @@ def build_report(
         body_size = 9
         body_color = colors.black
     
-    c.setStrokeColor(body_color)
-    c.setFont(font_name, body_size)
-    height_1 = page_height - margin_top - 95 - 70
-    c.drawString(right_frame_x + 4, height_1, "分析师: FinRpt")
-    c.drawString(right_frame_x + 4, height_1 - 20, "版权: ****")
-    c.drawString(right_frame_x + 4, height_1 - 40, "地址: ****")
+    # Get author section from config
+    author_y = page_height - margin_top - 95 - 70
+    if config and 'inputs' in config and 'author_section' in config['inputs']:
+        author_config = config['inputs']['author_section']
+        analysts = author_config.get('analysts', [])
+        legal_entity = author_config.get('legal_entity', {})
+        
+        # Get typography settings for author section
+        if 'typography' in author_config:
+            typo = author_config['typography']
+            name_font = typo.get('name_font', {})
+            role_font = typo.get('role_font', {})
+            contact_font = typo.get('contact_font', {})
+            
+            name_size = name_font.get('size_pt', body_size)
+            name_color = hex_to_color(name_font.get('color', '#111111'))
+            role_size = role_font.get('size_pt', body_size - 0.5)
+            role_color = hex_to_color(role_font.get('color', '#4A4A4A'))
+            contact_size = contact_font.get('size_pt', body_size - 1)
+            contact_color = hex_to_color(contact_font.get('color', '#7A7A7A'))
+        else:
+            name_size = body_size
+            name_color = body_color
+            role_size = body_size - 0.5
+            role_color = body_color
+            contact_size = body_size - 1
+            contact_color = body_color
+        
+        spacing = author_config.get('spacing', {})
+        analyst_block_margin = spacing.get('analyst_block_margin_pt', 4)  # Reduced from 6 to 4
+        
+        current_y = author_y
+        for analyst in analysts:
+            # Name - more condensed
+            c.setFont(font_name, name_size)
+            c.setFillColor(name_color)
+            # Truncate if too long to prevent overlap
+            name_text = analyst.get('name', '')
+            if len(name_text) > 20:
+                name_text = name_text[:17] + '...'
+            c.drawString(right_frame_x + 4, current_y, name_text)
+            current_y -= name_size + 1  # Reduced from 2 to 1
+            
+            # Role - more condensed
+            c.setFont(font_name, role_size)
+            c.setFillColor(role_color)
+            role_text = analyst.get('role', '')
+            if len(role_text) > 25:
+                role_text = role_text[:22] + '...'
+            c.drawString(right_frame_x + 4, current_y, role_text)
+            current_y -= role_size + 1  # Reduced from 2 to 1
+            
+            # Contact info - more condensed, smaller font
+            c.setFont(font_name, contact_size - 0.5)  # Even smaller
+            c.setFillColor(contact_color)
+            if analyst.get('phone'):
+                phone_text = analyst.get('phone', '')
+                if len(phone_text) > 25:
+                    phone_text = phone_text[:22] + '...'
+                c.drawString(right_frame_x + 4, current_y, phone_text)
+                current_y -= contact_size  # Reduced spacing
+            if analyst.get('email'):
+                email_text = analyst.get('email', '')
+                if len(email_text) > 25:
+                    email_text = email_text[:22] + '...'
+                c.drawString(right_frame_x + 4, current_y, email_text)
+                current_y -= contact_size  # Reduced spacing
+            
+            current_y -= analyst_block_margin
+        
+        # Legal entity if configured
+        if author_config.get('show_legal_entity', False) and legal_entity:
+            current_y -= 10
+            c.setFont(font_name, contact_size)
+            c.setFillColor(contact_color)
+            if legal_entity.get('name'):
+                c.drawString(right_frame_x + 4, current_y, legal_entity.get('name', ''))
+                current_y -= contact_size + 2
+            if legal_entity.get('address'):
+                addr = legal_entity['address']
+                address_parts = []
+                if addr.get('line1'):
+                    address_parts.append(addr['line1'])
+                if addr.get('city'):
+                    address_parts.append(addr['city'])
+                if addr.get('state'):
+                    address_parts.append(addr['state'])
+                if addr.get('postal_code'):
+                    address_parts.append(addr['postal_code'])
+                if address_parts:
+                    c.drawString(right_frame_x + 4, current_y, ', '.join(address_parts))
+    else:
+        # Fallback to default
+        c.setStrokeColor(body_color)
+        c.setFont(font_name, body_size)
+        c.drawString(right_frame_x + 4, author_y, "Analyst: FinRpt")
+        c.drawString(right_frame_x + 4, author_y - 20, "Copyright: ****")
+        c.drawString(right_frame_x + 4, author_y - 40, "Address: ****")
     
-    frame_title4 = draw_frame_title("基本状况", color1, right_frame_width - 4, font_name, config)
+    # Use section_titles already defined above (reuse from left frame section)
+    company_data_title = section_titles.get('company_data', 'Company Data')
+    frame_title4 = draw_frame_title(company_data_title, color1, right_frame_width - 4, font_name, config)
     _1, _2 = frame_title4.wrap(0, 0)
     frame_title4.drawOn(c, right_frame_x + 2, page_height - margin_top - 95 - 170)
     
-    key_data = get_key_data(stock_code, date)
-    base_data = {BASE_key_mapping[key]: value for key, value in key_data.items()}
-    base_data["交易所"] = res_data["company_info"]["stock_exchange"]
-    base_data["行业"] = res_data["company_info"]["industry_category"][-11:]
-    base_data = [[k, v] for k, v in base_data.items()]
-    base_table = get_base_table(font_name, base_data, config)
-    base_table.wrap(0, 0)
-    base_table.drawOn(c, right_frame_x + 3, page_height - margin_top - 95 - 270)
+    # Use table_company_data.png if available, otherwise fall back to generated table
+    if os.path.exists(table_company_data_path):
+        img = Image(table_company_data_path)
+        raw_width = img.imageWidth
+        raw_height = img.imageHeight
+        img.drawWidth = right_frame_width - 8
+        img.drawHeight = img.drawWidth * (raw_height / raw_width)
+        img.drawOn(c, right_frame_x + 3, page_height - margin_top - 95 - 270)
+    else:
+        # Fallback to original table generation (if PNG not available)
+        key_data = get_key_data(stock_code, date)
+        # Use keys directly (already in English)
+        base_data = dict(key_data)
+        base_data["Exchange"] = res_data["company_info"].get("stock_exchange", "N/A")
+        industry = res_data["company_info"].get("industry_category", "N/A")
+        base_data["Industry"] = industry[-11:] if len(industry) > 11 else industry
+        base_data = [[k, v] for k, v in base_data.items()]
+        base_table = get_base_table(font_name, base_data, config)
+        base_table.wrap(0, 0)
+        base_table.drawOn(c, right_frame_x + 3, page_height - margin_top - 95 - 270)
     
-    frame_title5 = draw_frame_title("股市与市场走势对比", color1, right_frame_width - 4, font_name, config)
+    # Price Performance Chart
+    price_performance_title = section_titles.get('price_performance', 'Price Performance')
+    frame_title5 = draw_frame_title(price_performance_title, color1, right_frame_width - 4, font_name, config)
     _1, _2 = frame_title5.wrap(0, 0)
     frame_title5.drawOn(c, right_frame_x + 2, page_height - margin_top - 95 - 300)
-    img = Image(share_performance_image_path)
+    # Use graph_price_performance.png (which may fall back to share_performance.png)
+    img = Image(graph_price_performance_path)
     raw_width = img.imageWidth
     raw_height = img.imageHeight
     img.drawWidth = right_frame_width - 8
     img.drawHeight = img.drawWidth * (raw_height / raw_width)
     img.drawOn(c, right_frame_x + 3, page_height - margin_top - 95 - 410)
     
-    frame_title6 = draw_frame_title("PE & EPS", color1, right_frame_width - 4, font_name, config)
+    # PE & EPS Chart
+    pe_eps_title = section_titles.get('pe_eps', 'PE & EPS')
+    frame_title6 = draw_frame_title(pe_eps_title, color1, right_frame_width - 4, font_name, config)
     frame_title6.wrap(0, 0)
     frame_title6.drawOn(c, right_frame_x + 2, page_height - margin_top - 95 - 435)
     img = Image(pe_eps_performance_image_path)
@@ -825,9 +1082,11 @@ def build_report(
     img.drawHeight = img.drawWidth * (raw_height / raw_width)
     img.drawOn(c, right_frame_x + 3, page_height - margin_top - 95 - 545)
     
-    frame_title6 = draw_frame_title("单季营业收入及增速", color1, right_frame_width - 4, font_name, config)
-    frame_title6.wrap(0, 0)
-    frame_title6.drawOn(c, right_frame_x + 2, page_height - margin_top - 95 - 570)
+    # Revenue Performance Chart
+    revenue_title = section_titles.get('revenue', 'Revenue Performance')
+    frame_title7 = draw_frame_title(revenue_title, color1, right_frame_width - 4, font_name, config)
+    frame_title7.wrap(0, 0)
+    frame_title7.drawOn(c, right_frame_x + 2, page_height - margin_top - 95 - 570)
     img = Image(revenue_performance_image_path)
     raw_width = img.imageWidth
     raw_height = img.imageHeight
@@ -839,7 +1098,9 @@ def build_report(
     if config and 'layout' in config and 'footer' in config['layout']:
         footer_config = config['layout']['footer']
         if footer_config.get('show', True):
-            footer_font = footer_config.get('font_family', secondary_font)
+            # Use built-in ReportLab font with fallback
+            footer_font_raw = footer_config.get('font_family', secondary_font)
+            footer_font = map_to_builtin_font(footer_font_raw)
             footer_size = footer_config.get('font_size_pt', 7)
             footer_color = hex_to_color(footer_config.get('color', '#7A7A7A'))
             

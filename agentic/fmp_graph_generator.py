@@ -140,6 +140,57 @@ def load_key_metrics(
         return None
 
 
+def load_financial_statements(
+    ticker: str,
+    statement_type: str,
+    period: str = 'annual',
+    db_path: str = None
+) -> Optional[List[Dict]]:
+    """
+    Load financial statements data from database.
+    
+    Args:
+        ticker: Stock ticker symbol
+        statement_type: 'income', 'balance', or 'cashflow'
+        period: 'annual' or 'quarter'
+        db_path: Path to database. If None, uses default.
+        
+    Returns:
+        List of statement dicts, or None if not found.
+    """
+    if db_path is None:
+        db_path = str(DEFAULT_DB_PATH)
+    
+    if not Path(db_path).exists():
+        print(f"Database not found at {db_path}")
+        return None
+    
+    cache_id = f"{ticker}_{statement_type}_{period}"
+    
+    try:
+        conn = sqlite3.connect(str(db_path))
+        c = conn.cursor()
+        c.execute(
+            'SELECT statements_data FROM financial_statements WHERE id = ?',
+            (cache_id,)
+        )
+        result = c.fetchone()
+        conn.close()
+        
+        if result and result[0]:
+            try:
+                return json.loads(result[0])
+            except json.JSONDecodeError as e:
+                print(f"Error parsing JSON data: {e}")
+                return None
+        else:
+            print(f"No financial statements data found for {cache_id}")
+            return None
+    except Exception as e:
+        print(f"Error loading financial statements data: {e}")
+        return None
+
+
 def load_company_data(
     ticker: str,
     as_of_date: str,
@@ -655,12 +706,12 @@ def generate_key_metrics_table(
                     loc='center',
                     bbox=[0, 0, 1, 1])
     
-    # Style the table - tightest vertical spacing, no borders
+    # Style the table - tightest vertical spacing, no borders, no title
     table.auto_set_font_size(False)
     table.set_fontsize(9)
-    table.scale(1, 0.5)  # Very tight rows
+    table.scale(1, 0.35)  # Very tight rows - more compact
     
-    # Style cells - remove all borders, minimal padding
+    # Style cells - remove all borders, zero padding
     for i in range(len(table_data)):
         for j in range(len(table_data[i])):
             cell = table[(i, j)]
@@ -692,20 +743,11 @@ def generate_key_metrics_table(
                 cell.get_text().set_ha('right')
             
             # Minimal height and zero padding for tightest spacing
-            cell.set_height(0.02)
+            cell.set_height(0.015)  # Even smaller height
             cell.PAD = 0.0  # Zero padding
     
-    # Add title - use the latest complete fiscal year in the title
-    # The title should reflect the most recent actual data year
-    title_text = f'Key Metrics (FYE {fiscal_year_end})'
-    # Add subtitle showing the actual years covered
-    subtitle_text = f'Latest Actual: FY{latest_complete_fy[-2:]}'
-    fig.text(0.5, 0.98, title_text, fontsize=12, fontweight='bold', 
-             ha='center', va='top')
-    fig.text(0.5, 0.96, '$ in millions', fontsize=9, 
-             ha='center', va='top')
-    
-    plt.tight_layout(rect=[0, 0, 1, 0.94])
+    # No title - use full space
+    plt.tight_layout(rect=[0, 0, 1, 1])
     
     # Save figure
     save_dir = Path(save_path)
@@ -965,6 +1007,657 @@ def plot_company_metrics(
     return str(plot_path)
 
 
+def get_actual_and_forecast_years(ticker: str, db_path: str = None):
+    """
+    Helper function to determine actual and forecast years from API data.
+    Returns latest_actual_year, year_2_ago, forecast_year_1, forecast_year_2
+    """
+    try:
+        from agentic.fmp_data_puller import fetch_financial_statements_fmp, FMP_API_KEY
+        import os
+        
+        # Fetch fresh data to determine latest actual year
+        income_statements, balance_sheets, cash_flows = fetch_financial_statements_fmp(
+            ticker, FMP_API_KEY, period='annual', limit=3
+        )
+        
+        if income_statements and balance_sheets and cash_flows:
+            # Get actual years from API
+            actual_years = []
+            for stmt in income_statements:
+                date_str = stmt.get('date', '')
+                if date_str:
+                    year = date_str[:4]
+                    if year.isdigit():
+                        actual_years.append(year)
+                elif stmt.get('calendarYear'):
+                    year = str(stmt.get('calendarYear'))
+                    if year.isdigit():
+                        actual_years.append(year)
+            
+            if actual_years:
+                actual_years = sorted(list(set(actual_years)), reverse=True, key=int)
+                if len(actual_years) >= 2:
+                    latest_actual = actual_years[0]
+                    year_2_ago = actual_years[1]
+                    forecast_year_1 = str(int(latest_actual) + 1)
+                    forecast_year_2 = str(int(latest_actual) + 2)
+                    return latest_actual, year_2_ago, forecast_year_1, forecast_year_2
+    except:
+        pass
+    
+    # Fallback
+    from datetime import datetime
+    current_year = int(datetime.now().strftime('%Y'))
+    latest_actual = str(current_year - 1)
+    year_2_ago = str(current_year - 2)
+    forecast_year_1 = str(current_year)
+    forecast_year_2 = str(current_year + 1)
+    return latest_actual, year_2_ago, forecast_year_1, forecast_year_2
+
+
+def generate_income_statement_table(
+    ticker: str,
+    save_path: str = './figs',
+    db_path: str = None
+) -> Optional[str]:
+    """
+    Generate income statement table similar to key metrics table format.
+    
+    Args:
+        ticker: Stock ticker symbol
+        save_path: Directory to save the table
+        db_path: Path to database. If None, uses default.
+        
+    Returns:
+        Path to saved table file, or None on error.
+    """
+    income_statements = load_financial_statements(ticker, 'income', 'annual', db_path)
+    if not income_statements:
+        print(f"No income statement data found for {ticker}")
+        return None
+    
+    # Get actual and forecast years
+    latest_actual, year_2_ago, forecast_year_1, forecast_year_2 = get_actual_and_forecast_years(ticker, db_path)
+    
+    # Organize statements by year
+    statements_by_year = {}
+    for stmt in income_statements:
+        date_str = stmt.get('date', '')
+        if date_str:
+            year = date_str[:4]
+        else:
+            year = str(stmt.get('calendarYear', ''))
+        if year.isdigit():
+            statements_by_year[year] = stmt
+    
+    # Get actual data
+    actual_data = {}
+    if latest_actual in statements_by_year:
+        actual_data[latest_actual] = statements_by_year[latest_actual]
+    if year_2_ago in statements_by_year:
+        actual_data[year_2_ago] = statements_by_year[year_2_ago]
+    
+    if len(actual_data) < 2:
+        print("Not enough actual years of data for income statement table")
+        return None
+    
+    # Get key metrics for forecasts (they contain forecasted income statement items)
+    key_metrics_data = load_key_metrics(ticker, db_path)
+    forecast_data = {}
+    if key_metrics_data and 'metrics' in key_metrics_data:
+        metrics = key_metrics_data['metrics']
+        if forecast_year_1 in metrics:
+            forecast_data[forecast_year_1] = metrics[forecast_year_1]
+        if forecast_year_2 in metrics:
+            forecast_data[forecast_year_2] = metrics[forecast_year_2]
+    
+    # Helper function to get value from statement or forecast
+    def get_value(year, key, is_forecast=False):
+        if is_forecast and year in forecast_data:
+            # For forecasts, use key_metrics data
+            if key == 'revenue':
+                return forecast_data[year].get('revenue', 0)  # Already in millions
+            elif key == 'costOfRevenue':
+                # Estimate from revenue and gross margin
+                revenue = forecast_data[year].get('revenue', 0)
+                ebitda_margin = forecast_data[year].get('ebitda_margin', 0) / 100
+                # Rough estimate: cost = revenue * (1 - margin)
+                return revenue * (1 - ebitda_margin * 0.7)  # Rough estimate
+            elif key == 'grossProfit':
+                revenue = forecast_data[year].get('revenue', 0)
+                cost = get_value(year, 'costOfRevenue', True)
+                return revenue - cost
+            elif key == 'operatingExpenses':
+                revenue = forecast_data[year].get('revenue', 0)
+                ebitda = forecast_data[year].get('adj_ebitda', 0)
+                ebit = forecast_data[year].get('adj_ebit', 0)
+                gross_profit = get_value(year, 'grossProfit', True)
+                # Operating expenses = Gross profit - EBIT
+                return gross_profit - ebit if gross_profit > ebit else 0
+            elif key == 'operatingIncome':
+                return forecast_data[year].get('adj_ebit', 0)
+            elif key == 'netIncome':
+                return forecast_data[year].get('adj_net_income', 0)
+            elif key == 'ebitda':
+                return forecast_data[year].get('adj_ebitda', 0)
+            else:
+                return 0
+        elif year in actual_data:
+            value = actual_data[year].get(key, 0) or 0
+            return value / 1e6  # Convert to millions
+        return 0
+    
+    # Prepare column headers
+    col_headers = [
+        f'FY{year_2_ago[-2:]}A',
+        f'FY{latest_actual[-2:]}A',
+        f'FY{forecast_year_1[-2:]}E',
+        f'FY{forecast_year_2[-2:]}E'
+    ]
+    
+    # Define income statement categories and rows
+    categories = {
+        'Revenue': [
+            ('Revenue', 'revenue', '{:,.0f}'),
+        ],
+        'Costs and Expenses': [
+            ('Cost of Revenue', 'costOfRevenue', '{:,.0f}'),
+            ('Gross Profit', 'grossProfit', '{:,.0f}'),
+            ('Operating Expenses', 'operatingExpenses', '{:,.0f}'),
+        ],
+        'Operating Income': [
+            ('Operating Income (EBIT)', 'operatingIncome', '{:,.0f}'),
+            ('EBITDA', 'ebitda', '{:,.0f}'),
+        ],
+        'Net Income': [
+            ('Net Income', 'netIncome', '{:,.0f}'),
+        ]
+    }
+    
+    # Create figure for table - smaller height for very compact table
+    fig, ax = plt.subplots(figsize=(6, 3.5))  # Much smaller height for compact table
+    ax.axis('off')
+    
+    # Build table data
+    table_data = []
+    table_data.append([''] + col_headers)  # Header row
+    
+    for category, metric_list in categories.items():
+        # Add category header
+        table_data.append([category] + [''] * len(col_headers))
+        
+        for metric_name, metric_key, format_str in metric_list:
+            row = [metric_name]
+            for i, year in enumerate([year_2_ago, latest_actual, forecast_year_1, forecast_year_2]):
+                is_forecast = i >= 2
+                value = get_value(year, metric_key, is_forecast)
+                
+                if value is None or value == 0:
+                    row.append(' - ')
+                else:
+                    try:
+                        if format_str == '{:,.0f}':
+                            row.append(f'{round(value):,.0f}')
+                        elif '%' in format_str:
+                            row.append(f'{round(value, 1):.1f}%')
+                        else:
+                            row.append(f'{round(value, 2):.2f}')
+                    except:
+                        row.append(' - ')
+            table_data.append(row)
+    
+    # Create table
+    metric_col_width = 0.4
+    data_col_width = (1.0 - metric_col_width) / len(col_headers)
+    col_widths = [metric_col_width] + [data_col_width] * len(col_headers)
+    
+    table = ax.table(cellText=table_data,
+                    colWidths=col_widths,
+                    cellLoc='left',
+                    loc='center',
+                    bbox=[0, 0, 1, 1])
+    
+    # Style the table - extremely tight vertical spacing for very compact table
+    table.auto_set_font_size(False)
+    table.set_fontsize(7)  # Smaller font for compact table
+    table.scale(1, 0.05)  # Extremely tight vertical scaling for very compact table
+    
+    # Style cells - extremely tight spacing, zero padding
+    for i in range(len(table_data)):
+        for j in range(len(table_data[i])):
+            cell = table[(i, j)]
+            
+            if i == 0:  # Header row
+                cell.set_facecolor('#e0e0e0')
+                cell.set_text_props(weight='bold', color='#000000', size=7)
+                cell.set_edgecolor('none')  # No borders
+                cell.set_linewidth(0)
+            elif j == 0 and table_data[i][0] in categories.keys():  # Category rows
+                cell.set_facecolor('#f0f0f0')
+                cell.set_text_props(weight='bold', color='#000000', size=7)
+                cell.set_edgecolor('none')  # No borders
+                cell.set_linewidth(0)
+            elif j == 0:  # Data rows - left column
+                cell.set_facecolor('#ffffff')
+                cell.set_text_props(color='#000000', size=7)
+                cell.set_edgecolor('none')  # No borders
+                cell.set_linewidth(0)
+            else:  # Data rows - value columns
+                cell.set_facecolor('#ffffff')
+                cell.set_text_props(color='#000000', size=7)
+                cell.set_edgecolor('none')  # No borders
+                cell.set_linewidth(0)
+                cell.get_text().set_ha('right')
+            
+            # Extremely tight vertical spacing - minimal height
+            cell.set_height(0.0015)  # Very small height for tightest spacing
+            cell.PAD = 0.0  # Zero padding
+            # Set minimal vertical padding
+            cell.get_text().set_va('center')
+    
+    # No title - use full space (match key_metrics)
+    plt.tight_layout(rect=[0, 0, 1, 1])
+    
+    # Save figure
+    save_dir = Path(save_path)
+    save_dir.mkdir(parents=True, exist_ok=True)
+    table_path = save_dir / 'table_income_statement.png'
+    plt.savefig(table_path, dpi=300, bbox_inches='tight', facecolor='white')
+    plt.close()
+    
+    print(f"Income statement table saved to {table_path}")
+    return str(table_path)
+
+
+def generate_balance_sheet_table(
+    ticker: str,
+    save_path: str = './figs',
+    db_path: str = None
+) -> Optional[str]:
+    """
+    Generate balance sheet table similar to key metrics table format.
+    
+    Args:
+        ticker: Stock ticker symbol
+        save_path: Directory to save the table
+        db_path: Path to database. If None, uses default.
+        
+    Returns:
+        Path to saved table file, or None on error.
+    """
+    balance_sheets = load_financial_statements(ticker, 'balance', 'annual', db_path)
+    if not balance_sheets:
+        print(f"No balance sheet data found for {ticker}")
+        return None
+    
+    # Get actual and forecast years
+    latest_actual, year_2_ago, forecast_year_1, forecast_year_2 = get_actual_and_forecast_years(ticker, db_path)
+    
+    # Organize statements by year
+    statements_by_year = {}
+    for stmt in balance_sheets:
+        date_str = stmt.get('date', '')
+        if date_str:
+            year = date_str[:4]
+        else:
+            year = str(stmt.get('calendarYear', ''))
+        if year.isdigit():
+            statements_by_year[year] = stmt
+    
+    # Get actual data
+    actual_data = {}
+    if latest_actual in statements_by_year:
+        actual_data[latest_actual] = statements_by_year[latest_actual]
+    if year_2_ago in statements_by_year:
+        actual_data[year_2_ago] = statements_by_year[year_2_ago]
+    
+    if len(actual_data) < 2:
+        print("Not enough actual years of data for balance sheet table")
+        return None
+    
+    # Get key metrics for forecasts
+    key_metrics_data = load_key_metrics(ticker, db_path)
+    forecast_data = {}
+    if key_metrics_data and 'metrics' in key_metrics_data:
+        metrics = key_metrics_data['metrics']
+        if forecast_year_1 in metrics:
+            forecast_data[forecast_year_1] = metrics[forecast_year_1]
+        if forecast_year_2 in metrics:
+            forecast_data[forecast_year_2] = metrics[forecast_year_2]
+    
+    # Helper function to get value
+    def get_value(year, key, is_forecast=False):
+        if is_forecast and year in forecast_data:
+            # For forecasts, use simple growth assumptions
+            if year_2_ago in actual_data and latest_actual in actual_data:
+                prev_value = (actual_data[latest_actual].get(key, 0) or 0) / 1e6
+                # Simple growth assumption based on revenue growth
+                revenue_growth = forecast_data[year].get('revenue_growth', 0) / 100 if forecast_data[year] else 0
+                return prev_value * (1 + revenue_growth * 0.5)  # Assets grow slower than revenue
+            return 0
+        elif year in actual_data:
+            value = actual_data[year].get(key, 0) or 0
+            return value / 1e6
+        return 0
+    
+    # Prepare column headers
+    col_headers = [
+        f'FY{year_2_ago[-2:]}A',
+        f'FY{latest_actual[-2:]}A',
+        f'FY{forecast_year_1[-2:]}E',
+        f'FY{forecast_year_2[-2:]}E'
+    ]
+    
+    # Define balance sheet categories
+    categories = {
+        'Assets': [
+            ('Cash and Cash Equivalents', 'cashAndCashEquivalents', '{:,.0f}'),
+            ('Total Current Assets', 'totalCurrentAssets', '{:,.0f}'),
+            ('Total Assets', 'totalAssets', '{:,.0f}'),
+        ],
+        'Liabilities': [
+            ('Total Current Liabilities', 'totalCurrentLiabilities', '{:,.0f}'),
+            ('Total Debt', 'totalDebt', '{:,.0f}'),
+            ('Total Liabilities', 'totalLiabilities', '{:,.0f}'),
+        ],
+        'Equity': [
+            ('Total Stockholders Equity', 'totalStockholdersEquity', '{:,.0f}'),
+        ]
+    }
+    
+    # Create figure for table - very small height for extremely compact table
+    fig, ax = plt.subplots(figsize=(6, 3))  # Very small height for compact table
+    ax.axis('off')
+    
+    # Build table data
+    table_data = []
+    table_data.append([''] + col_headers)
+    
+    for category, metric_list in categories.items():
+        table_data.append([category] + [''] * len(col_headers))
+        
+        for metric_name, metric_key, format_str in metric_list:
+            row = [metric_name]
+            for i, year in enumerate([year_2_ago, latest_actual, forecast_year_1, forecast_year_2]):
+                is_forecast = i >= 2
+                value = get_value(year, metric_key, is_forecast)
+                
+                if value is None or value == 0:
+                    row.append(' - ')
+                else:
+                    try:
+                        row.append(f'{round(value):,.0f}')
+                    except:
+                        row.append(' - ')
+            table_data.append(row)
+    
+    # Create and style table - extremely compact
+    metric_col_width = 0.4
+    data_col_width = (1.0 - metric_col_width) / len(col_headers)
+    col_widths = [metric_col_width] + [data_col_width] * len(col_headers)
+    
+    table = ax.table(cellText=table_data,
+                    colWidths=col_widths,
+                    cellLoc='left',
+                    loc='center',
+                    bbox=[0, 0, 1, 1])
+    
+    table.auto_set_font_size(False)
+    table.set_fontsize(7)  # Smaller font for compact table
+    table.scale(1, 0.04)  # Extremely tight vertical scaling - very compact
+    
+    for i in range(len(table_data)):
+        for j in range(len(table_data[i])):
+            cell = table[(i, j)]
+            
+            if i == 0:
+                cell.set_facecolor('#e0e0e0')
+                cell.set_text_props(weight='bold', color='#000000', size=7)
+                cell.set_edgecolor('none')  # No borders
+                cell.set_linewidth(0)
+            elif j == 0 and table_data[i][0] in categories.keys():
+                cell.set_facecolor('#f0f0f0')
+                cell.set_text_props(weight='bold', color='#000000', size=7)
+                cell.set_edgecolor('none')  # No borders
+                cell.set_linewidth(0)
+            elif j == 0:
+                cell.set_facecolor('#ffffff')
+                cell.set_text_props(color='#000000', size=7)
+                cell.set_edgecolor('none')  # No borders
+                cell.set_linewidth(0)
+            else:
+                cell.set_facecolor('#ffffff')
+                cell.set_text_props(color='#000000', size=7)
+                cell.set_edgecolor('none')  # No borders
+                cell.set_linewidth(0)
+                cell.get_text().set_ha('right')
+            
+            # Extremely tight vertical spacing - minimal height
+            cell.set_height(0.0015)  # Very small height for tightest spacing
+            cell.PAD = 0.0  # Zero padding
+            # Set minimal vertical padding
+            cell.get_text().set_va('center')
+    
+    # No title - use full space (match key_metrics)
+    plt.tight_layout(rect=[0, 0, 1, 1])
+    
+    save_dir = Path(save_path)
+    save_dir.mkdir(parents=True, exist_ok=True)
+    table_path = save_dir / 'table_balance_sheet.png'
+    plt.savefig(table_path, dpi=300, bbox_inches='tight', facecolor='white')
+    plt.close()
+    
+    print(f"Balance sheet table saved to {table_path}")
+    return str(table_path)
+
+
+def generate_cash_flow_table(
+    ticker: str,
+    save_path: str = './figs',
+    db_path: str = None
+) -> Optional[str]:
+    """
+    Generate cash flow statement table similar to key metrics table format.
+    
+    Args:
+        ticker: Stock ticker symbol
+        save_path: Directory to save the table
+        db_path: Path to database. If None, uses default.
+        
+    Returns:
+        Path to saved table file, or None on error.
+    """
+    cash_flows = load_financial_statements(ticker, 'cashflow', 'annual', db_path)
+    if not cash_flows:
+        print(f"No cash flow statement data found for {ticker}")
+        return None
+    
+    # Get actual and forecast years
+    latest_actual, year_2_ago, forecast_year_1, forecast_year_2 = get_actual_and_forecast_years(ticker, db_path)
+    
+    # Organize statements by year
+    statements_by_year = {}
+    for stmt in cash_flows:
+        date_str = stmt.get('date', '')
+        if date_str:
+            year = date_str[:4]
+        else:
+            year = str(stmt.get('calendarYear', ''))
+        if year.isdigit():
+            statements_by_year[year] = stmt
+    
+    # Get actual data
+    actual_data = {}
+    if latest_actual in statements_by_year:
+        actual_data[latest_actual] = statements_by_year[latest_actual]
+    if year_2_ago in statements_by_year:
+        actual_data[year_2_ago] = statements_by_year[year_2_ago]
+    
+    if len(actual_data) < 2:
+        print("Not enough actual years of data for cash flow table")
+        return None
+    
+    # Get key metrics for forecasts
+    key_metrics_data = load_key_metrics(ticker, db_path)
+    forecast_data = {}
+    if key_metrics_data and 'metrics' in key_metrics_data:
+        metrics = key_metrics_data['metrics']
+        if forecast_year_1 in metrics:
+            forecast_data[forecast_year_1] = metrics[forecast_year_1]
+        if forecast_year_2 in metrics:
+            forecast_data[forecast_year_2] = metrics[forecast_year_2]
+    
+    # Helper function to get value
+    def get_value(year, key, is_forecast=False):
+        if is_forecast and year in forecast_data:
+            # For forecasts, use key_metrics data
+            if key == 'operatingCashFlow':
+                return forecast_data[year].get('cfo', 0)  # Already in millions
+            elif key == 'capitalExpenditure':
+                # Estimate from historical ratio
+                if latest_actual in actual_data:
+                    prev_capex = abs(actual_data[latest_actual].get('capitalExpenditure', 0) or 0) / 1e6
+                    revenue_growth = forecast_data[year].get('revenue_growth', 0) / 100
+                    return prev_capex * (1 + revenue_growth * 0.8)
+                return 0
+            elif key == 'freeCashFlow':
+                ocf = get_value(year, 'operatingCashFlow', True)
+                capex = get_value(year, 'capitalExpenditure', True)
+                return ocf - capex
+            elif key in ['netCashUsedForInvestingActivites', 'netCashUsedForInvestingActivities']:
+                capex = get_value(year, 'capitalExpenditure', True)
+                return -capex  # Typically negative
+            elif key == 'netCashUsedProvidedByFinancingActivities':
+                # Estimate based on historical patterns
+                if latest_actual in actual_data:
+                    prev_value = (actual_data[latest_actual].get('netCashUsedProvidedByFinancingActivities', 0) or 0) / 1e6
+                    return prev_value * 0.9  # Slight decrease
+                return 0
+            return 0
+        elif year in actual_data:
+            # Handle both spellings of investing activities
+            if key == 'netCashUsedForInvestingActivities':
+                value = (actual_data[year].get('netCashUsedForInvestingActivities', 0) or 
+                        actual_data[year].get('netCashUsedForInvestingActivites', 0) or 0)
+            else:
+                value = actual_data[year].get(key, 0) or 0
+            if key == 'capitalExpenditure':
+                return abs(value) / 1e6
+            return value / 1e6
+        return 0
+    
+    # Prepare column headers
+    col_headers = [
+        f'FY{year_2_ago[-2:]}A',
+        f'FY{latest_actual[-2:]}A',
+        f'FY{forecast_year_1[-2:]}E',
+        f'FY{forecast_year_2[-2:]}E'
+    ]
+    
+    # Define cash flow categories
+    categories = {
+        'Operating Activities': [
+            ('Operating Cash Flow', 'operatingCashFlow', '{:,.0f}'),
+        ],
+        'Investing Activities': [
+            ('Capital Expenditure', 'capitalExpenditure', '{:,.0f}'),
+            ('Net Cash from Investing', 'netCashUsedForInvestingActivities', '{:,.0f}'),
+        ],
+        'Financing Activities': [
+            ('Net Cash from Financing', 'netCashUsedProvidedByFinancingActivities', '{:,.0f}'),
+        ],
+        'Free Cash Flow': [
+            ('Free Cash Flow', 'freeCashFlow', '{:,.0f}'),
+        ]
+    }
+    
+    # Create figure for table - smaller height for compact table
+    fig, ax = plt.subplots(figsize=(6, 4))  # Reduced height for compact table
+    ax.axis('off')
+    
+    # Build table data
+    table_data = []
+    table_data.append([''] + col_headers)
+    
+    for category, metric_list in categories.items():
+        table_data.append([category] + [''] * len(col_headers))
+        
+        for metric_name, metric_key, format_str in metric_list:
+            row = [metric_name]
+            for i, year in enumerate([year_2_ago, latest_actual, forecast_year_1, forecast_year_2]):
+                is_forecast = i >= 2
+                value = get_value(year, metric_key, is_forecast)
+                
+                if value is None:
+                    row.append(' - ')
+                else:
+                    try:
+                        row.append(f'{round(value):,.0f}')
+                    except:
+                        row.append(' - ')
+            table_data.append(row)
+    
+    # Create and style table - match key_metrics exactly
+    metric_col_width = 0.4
+    data_col_width = (1.0 - metric_col_width) / len(col_headers)
+    col_widths = [metric_col_width] + [data_col_width] * len(col_headers)
+    
+    table = ax.table(cellText=table_data,
+                    colWidths=col_widths,
+                    cellLoc='left',
+                    loc='center',
+                    bbox=[0, 0, 1, 1])
+    
+    table.auto_set_font_size(False)
+    table.set_fontsize(7)  # Smaller font for compact table
+    table.scale(1, 0.04)  # Extremely tight vertical scaling - very compact
+    
+    for i in range(len(table_data)):
+        for j in range(len(table_data[i])):
+            cell = table[(i, j)]
+            
+            if i == 0:
+                cell.set_facecolor('#e0e0e0')
+                cell.set_text_props(weight='bold', color='#000000', size=7)
+                cell.set_edgecolor('none')  # No borders
+                cell.set_linewidth(0)
+            elif j == 0 and table_data[i][0] in categories.keys():
+                cell.set_facecolor('#f0f0f0')
+                cell.set_text_props(weight='bold', color='#000000', size=7)
+                cell.set_edgecolor('none')  # No borders
+                cell.set_linewidth(0)
+            elif j == 0:
+                cell.set_facecolor('#ffffff')
+                cell.set_text_props(color='#000000', size=7)
+                cell.set_edgecolor('none')  # No borders
+                cell.set_linewidth(0)
+            else:
+                cell.set_facecolor('#ffffff')
+                cell.set_text_props(color='#000000', size=7)
+                cell.set_edgecolor('none')  # No borders
+                cell.set_linewidth(0)
+                cell.get_text().set_ha('right')
+            
+            # Extremely tight vertical spacing - minimal height
+            cell.set_height(0.0015)  # Very small height for tightest spacing
+            cell.PAD = 0.0  # Zero padding
+            # Set minimal vertical padding
+            cell.get_text().set_va('center')
+    
+    # No title - use full space (match key_metrics)
+    plt.tight_layout(rect=[0, 0, 1, 1])
+    
+    save_dir = Path(save_path)
+    save_dir.mkdir(parents=True, exist_ok=True)
+    table_path = save_dir / 'table_cash_flow_statement.png'
+    plt.savefig(table_path, dpi=300, bbox_inches='tight', facecolor='white')
+    plt.close()
+    
+    print(f"Cash flow statement table saved to {table_path}")
+    return str(table_path)
+
+
 def generate_all_graphs(
     ticker: str,
     company_name: str = None,
@@ -1028,6 +1721,24 @@ def generate_all_graphs(
     # Generate key metrics table
     print(f"\nGenerating key metrics table for {ticker}...")
     results['key_metrics_table'] = generate_key_metrics_table(
+        ticker, str(save_path), db_path
+    )
+    
+    # Generate income statement table
+    print(f"\nGenerating income statement table for {ticker}...")
+    results['income_statement_table'] = generate_income_statement_table(
+        ticker, str(save_path), db_path
+    )
+    
+    # Generate balance sheet table
+    print(f"\nGenerating balance sheet table for {ticker}...")
+    results['balance_sheet_table'] = generate_balance_sheet_table(
+        ticker, str(save_path), db_path
+    )
+    
+    # Generate cash flow statement table
+    print(f"\nGenerating cash flow statement table for {ticker}...")
+    results['cash_flow_table'] = generate_cash_flow_table(
         ticker, str(save_path), db_path
     )
     

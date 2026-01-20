@@ -108,6 +108,18 @@ def init_tables(db_path: str = None) -> None:
     )
     ''')
     
+    # Create financial_statements table
+    c.execute('''
+    CREATE TABLE IF NOT EXISTS financial_statements (
+        id TEXT PRIMARY KEY,
+        ticker TEXT,
+        statement_type TEXT,
+        period TEXT,
+        statements_data TEXT,
+        created_at TEXT
+    )
+    ''')
+    
     conn.commit()
     conn.close()
 
@@ -953,6 +965,170 @@ def check_key_metrics_cache(
     return None
 
 
+def check_financial_statements_cache(
+    ticker: str,
+    statement_type: str,
+    period: str = 'annual',
+    db_path: str = None
+) -> Optional[List[Dict]]:
+    """
+    Check if financial statements data exists in cache.
+    
+    Args:
+        ticker: Stock ticker symbol
+        statement_type: 'income', 'balance', or 'cashflow'
+        period: 'annual' or 'quarter'
+        db_path: Path to database. If None, uses default.
+        
+    Returns:
+        List of statement dicts if found, None otherwise.
+    """
+    if db_path is None:
+        db_path = str(DEFAULT_DB_PATH)
+    
+    if not Path(db_path).exists():
+        return None
+    
+    cache_id = f"{ticker}_{statement_type}_{period}"
+    
+    try:
+        conn = sqlite3.connect(str(db_path))
+        c = conn.cursor()
+        c.execute(
+            'SELECT statements_data FROM financial_statements WHERE id = ?',
+            (cache_id,)
+        )
+        result = c.fetchone()
+        conn.close()
+        
+        if result and result[0]:
+            try:
+                return json.loads(result[0])
+            except json.JSONDecodeError:
+                return None
+    except Exception as e:
+        print(f"Error checking financial statements cache: {e}")
+    
+    return None
+
+
+def save_financial_statements(
+    db_path: str,
+    ticker: str,
+    statement_type: str,
+    period: str,
+    statements_data: List[Dict]
+) -> bool:
+    """
+    Save financial statements data to database.
+    
+    Args:
+        db_path: Path to database
+        ticker: Stock ticker symbol
+        statement_type: 'income', 'balance', or 'cashflow'
+        period: 'annual' or 'quarter'
+        statements_data: List of statement dicts
+        
+    Returns:
+        True if successful, False otherwise
+    """
+    cache_id = f"{ticker}_{statement_type}_{period}"
+    created_at = datetime.now().isoformat()
+    
+    try:
+        conn = sqlite3.connect(str(db_path))
+        c = conn.cursor()
+        
+        c.execute('''
+        INSERT OR REPLACE INTO financial_statements 
+        (id, ticker, statement_type, period, statements_data, created_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+        ''', (
+            cache_id,
+            ticker,
+            statement_type,
+            period,
+            json.dumps(statements_data),
+            created_at
+        ))
+        
+        conn.commit()
+        conn.close()
+        return True
+    except Exception as e:
+        print(f"Error saving financial statements: {e}")
+        return False
+
+
+def pull_financial_statements(
+    ticker: str,
+    period: str = 'annual',
+    limit: int = 5,
+    db_path: str = None
+) -> Optional[Dict]:
+    """
+    Pull financial statements data for a ticker (with caching).
+    
+    Args:
+        ticker: Stock ticker symbol
+        period: 'annual' or 'quarter'
+        limit: Number of periods to fetch
+        db_path: Path to database
+        
+    Returns:
+        Dictionary with 'income', 'balance', and 'cashflow' keys, each containing list of statements
+    """
+    if db_path is None:
+        db_path = str(DEFAULT_DB_PATH)
+    
+    # Initialize database tables
+    init_tables(db_path)
+    
+    result = {
+        'income': None,
+        'balance': None,
+        'cashflow': None
+    }
+    
+    # Check cache for each statement type
+    cached_income = check_financial_statements_cache(ticker, 'income', period, db_path)
+    cached_balance = check_financial_statements_cache(ticker, 'balance', period, db_path)
+    cached_cashflow = check_financial_statements_cache(ticker, 'cashflow', period, db_path)
+    
+    if cached_income and cached_balance and cached_cashflow:
+        print(f"Using cached financial statements data for {ticker}")
+        result['income'] = cached_income
+        result['balance'] = cached_balance
+        result['cashflow'] = cached_cashflow
+        return result
+    
+    # Fetch from API
+    print(f"Fetching financial statements from FMP API for {ticker}...")
+    income_statements, balance_sheets, cash_flows = fetch_financial_statements_fmp(
+        ticker, FMP_API_KEY, period=period, limit=limit
+    )
+    
+    if income_statements:
+        save_financial_statements(db_path, ticker, 'income', period, income_statements)
+        result['income'] = income_statements
+        print(f"Income statements saved to cache ({len(income_statements)} periods)")
+    
+    if balance_sheets:
+        save_financial_statements(db_path, ticker, 'balance', period, balance_sheets)
+        result['balance'] = balance_sheets
+        print(f"Balance sheets saved to cache ({len(balance_sheets)} periods)")
+    
+    if cash_flows:
+        save_financial_statements(db_path, ticker, 'cashflow', period, cash_flows)
+        result['cashflow'] = cash_flows
+        print(f"Cash flow statements saved to cache ({len(cash_flows)} periods)")
+    
+    if not (income_statements and balance_sheets and cash_flows):
+        print("Warning: Some financial statements failed to fetch")
+    
+    return result if any(result.values()) else None
+
+
 def save_key_metrics(
     db_path: str,
     ticker: str,
@@ -1065,7 +1241,7 @@ def pull_key_metrics(
                     if forecast_year_1 not in cached or forecast_year_2 not in cached:
                         print("Generating missing forecasts using OpenAI...")
                         try:
-                            from agentic.financial_forecastor import generate_forecast_for_years
+                            from agentic.financial_forecastor_agent import generate_forecast_for_years
                             forecasts = generate_forecast_for_years(
                                 ticker=ticker,
                                 latest_actual_year=latest_actual_year,
@@ -1136,7 +1312,7 @@ def pull_key_metrics(
     # Generate forecasts using OpenAI if requested, otherwise use simple method
     if use_openai_forecast:
         try:
-            from agentic.financial_forecastor import generate_forecast_for_years
+            from agentic.financial_forecastor_agent import generate_forecast_for_years
             print(f"Generating forecasts using OpenAI for {ticker}...")
             print(f"  Latest actual fiscal year: {latest_actual_year}")
             print(f"  Forecasting fiscal years: {forecast_year_1}, {forecast_year_2}")
@@ -1321,6 +1497,13 @@ def pull_tesla_data(
         temperature=temperature
     )
     result['key_metrics'] = key_metrics
+    
+    # Fetch S4: Financial Statements
+    print(f"Fetching financial statements for {ticker}...")
+    financial_statements = pull_financial_statements(
+        ticker, period='annual', limit=5, db_path=db_path
+    )
+    result['financial_statements'] = financial_statements
     
     return result
 

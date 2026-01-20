@@ -9,6 +9,60 @@ inputs:
     report_date: "2025-01-30"
     ticker: "TSLA"
 
+  author_section:
+    heading_label: "Morgan Stanley Research Analysts"
+    layout: "stacked"
+    show_legal_entity: true
+
+    analysts:
+      - name: "Michael Johnson"
+        role: "Lead Equity Analyst"
+        phone: "+1-212-555-4123"
+        email: "michael.johnson@ms-research-demo.com"
+
+      - name: "Emily Chen"
+        role: "Equity Research Analyst"
+        phone: "+1-212-555-6384"
+        email: "emily.chen@ms-research-demo.com"
+
+      - name: "David Miller"
+        role: "Associate Analyst"
+        phone: "+1-212-555-5479"
+        email: "david.miller@ms-research-demo.com"
+
+    legal_entity:
+      name: "Morgan Stanley & Co. LLC"
+      disclosure_required: true
+      address:
+        line1: "1585 Broadway"
+        city: "New York"
+        state: "NY"
+        postal_code: "10036"
+        country: "United States"
+
+    typography:
+      name_font:
+        family: "MSGloriolaIIStd"
+        weight: 500
+        size_pt: 9
+        color: "#111111"
+      role_font:
+        family: "MSGloriolaIIStd"
+        weight: 400
+        size_pt: 8.5
+        color: "#4A4A4A"
+      contact_font:
+        family: "Roboto"
+        weight: 300
+        size_pt: 8
+        color: "#7A7A7A"
+
+    spacing:
+      analyst_block_margin_pt: 6
+      line_spacing: 1.25
+
+
+
 brand:
   name: "Morgan Stanley"
   # Colors approximated from the MS PDF’s visible accent palette (dominant blues + neutral greys).
@@ -105,6 +159,7 @@ layout:
 
 components:
   title_block:
+    title: ""  # If empty, will use company_name + report_title from res_data
     title_font: { family: "MSGloriolaIIStd", weight: 300, size_pt: 24, color: "#111111" }
     subtitle_font: { family: "MSGloriolaIIStd", weight: 500, size_pt: 12, color: "#4A4A4A" }
     meta_font: { family: "Roboto", weight: 300, size_pt: 8, color: "#7A7A7A" }
@@ -112,6 +167,21 @@ components:
       - "report_date"
       - "provider"
       - "analyst_names"
+  
+  section_titles:
+    core_insights: "Core Insights"
+    risk_assessment: "Risk Assessment"
+    financial_data: "Financial Data"
+    company_data: "Company Data"
+    key_metrics: "Key Metrics"
+    income_statement: "Income Statement"
+    balance_sheet: "Balance Sheet"
+    cash_flow: "Cash Flow Statement"
+    performance: "Performance"
+    price_performance: "Price Performance"
+    pe_eps: "PE & EPS"
+    revenue: "Revenue Performance"
+    author: "Authors"
 
   section_heading:
     rule:
