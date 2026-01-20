@@ -602,7 +602,8 @@ class EquityReportGenerator:
         print("Generating graphs and tables...")
         from agentic.fmp_graph_generator import (
             plot_price_performance, generate_company_data_table, 
-            generate_key_metrics_table
+            generate_key_metrics_table, generate_income_statement_table,
+            generate_balance_sheet_table, generate_cash_flow_table
         )
         from datetime import timedelta
         
@@ -638,9 +639,32 @@ class EquityReportGenerator:
         except Exception as e:
             print(f"Warning: Could not generate key metrics table: {e}")
         
+        # Generate financial statements tables for pages 2-3
+        try:
+            graph_results['income_statement_table'] = generate_income_statement_table(
+                self.ticker, str(figs_dir), self.db_path
+            )
+        except Exception as e:
+            print(f"Warning: Could not generate income statement table: {e}")
+        
+        try:
+            graph_results['balance_sheet_table'] = generate_balance_sheet_table(
+                self.ticker, str(figs_dir), self.db_path
+            )
+        except Exception as e:
+            print(f"Warning: Could not generate balance sheet table: {e}")
+        
+        try:
+            graph_results['cash_flow_table'] = generate_cash_flow_table(
+                self.ticker, str(figs_dir), self.db_path
+            )
+        except Exception as e:
+            print(f"Warning: Could not generate cash flow table: {e}")
+        
         # Store paths to generated images
         self.fig_paths = {}
-        for key in ['price_performance', 'company_data_table', 'key_metrics_table']:
+        for key in ['price_performance', 'company_data_table', 'key_metrics_table',
+                    'income_statement_table', 'balance_sheet_table', 'cash_flow_table']:
             if graph_results.get(key):
                 fig_path = Path(graph_results[key])
                 if fig_path.exists():
@@ -650,7 +674,10 @@ class EquityReportGenerator:
                     pattern_map = {
                         'price_performance': 'graph_price_performance.png',
                         'company_data_table': 'table_company_data.png',
-                        'key_metrics_table': 'table_key_metrics.png'
+                        'key_metrics_table': 'table_key_metrics.png',
+                        'income_statement_table': 'table_income_statement.png',
+                        'balance_sheet_table': 'table_balance_sheet.png',
+                        'cash_flow_table': 'table_cash_flow_statement.png'
                     }
                     if key in pattern_map:
                         found_files = list(figs_dir.glob(pattern_map[key]))
@@ -889,6 +916,113 @@ class EquityReportGenerator:
             )
         
         return text
+    
+    def _draw_page_header_footer(self, c, logo_path_obj, header_font, header_font_size, 
+                                  header_color, right_text_color, report_date_color,
+                                  report_date_str, right_text, footer_font, footer_font_size, footer_color):
+        """
+        Draw header and footer on a page (reusable for all pages).
+        
+        Args:
+            c: Canvas object
+            logo_path_obj: Path to logo image
+            header_font: Font name for header
+            header_font_size: Font size for header
+            header_color: Color for header text
+            right_text_color: Color for right side header text
+            report_date_color: Color for report date
+            report_date_str: Report date string
+            right_text: Right side header text
+            footer_font: Font name for footer
+            footer_font_size: Font size for footer
+            footer_color: Color for footer text
+        """
+        logo_center_y = None
+        
+        # Draw header
+        if logo_path_obj.exists():
+            try:
+                logo_img = Image(str(logo_path_obj))
+                original_width = logo_img.imageWidth
+                original_height = logo_img.imageHeight
+                logo_height = 35 * 2
+                logo_width = logo_height * (original_width / original_height)
+                logo_img.drawWidth = logo_width
+                logo_img.drawHeight = logo_height
+                logo_y = self.page_height - logo_height - 5
+                logo_img.drawOn(c, self.margin_left, logo_y)
+                
+                c.setFont(header_font, header_font_size)
+                c.setFillColor(header_color)
+                research_text = "Research"
+                logo_center_y = self.page_height - logo_height / 2 - 5
+                line_x = self.margin_left + logo_img.drawWidth + 8
+                line_height = header_font_size * 1.5
+                line_center_y = logo_center_y
+                line_y_top = line_center_y + line_height / 2
+                line_y_bottom = line_center_y - line_height / 2
+                c.setStrokeColor(header_color)
+                c.setLineWidth(0.5)
+                c.line(line_x, line_y_bottom, line_x, line_y_top)
+                research_x = line_x + 8
+                research_y = line_center_y - header_font_size / 2 + 2
+                c.drawString(research_x, research_y, research_text)
+            except Exception as e:
+                print(f"Warning: Could not load logo: {e}")
+        
+        # Right side header
+        if logo_center_y is not None:
+            right_text_y = logo_center_y + header_font_size / 2 - 2
+        else:
+            right_text_y = self.page_height - header_font_size - 5
+        
+        c.setFont(header_font, header_font_size)
+        c.setFillColor(right_text_color)
+        c.drawRightString(self.page_width - self.margin_right, right_text_y, right_text)
+        
+        # Report date
+        report_date_font_size = self.header_config.get('report_date_font_size_pt', 7)
+        if logo_center_y is not None:
+            date_y = right_text_y - header_font_size - 3
+        else:
+            date_y = self.page_height - self.margin_top - 5
+        
+        c.setFont(header_font, report_date_font_size)
+        c.setFillColor(report_date_color)
+        c.drawRightString(self.page_width - self.margin_right, date_y, report_date_str)
+        
+        # Draw footer
+        if self.footer_config.get('show', True):
+            footer_text = (
+                "See following pages for analyst certification and important disclosures. "
+                f"{self.brand_name} and its affiliates may seek to conduct business with the companies discussed in this research report. "
+                "As a result, investors should be aware that potential conflicts of interest may exist that could influence the objectivity of the analysis. "
+                "This report is intended for informational purposes only and should be considered as one input among many when making investment decisions, rather than as a sole basis for action."
+            )
+            footer_y = self.margin_bottom - 5
+            c.setFont(footer_font, footer_font_size)
+            c.setFillColor(footer_color)
+            
+            # Wrap footer text to fit page width
+            footer_width = self.page_width - self.margin_left - self.margin_right
+            words = footer_text.split()
+            lines = []
+            current_line = ""
+            for word in words:
+                test_line = current_line + (" " if current_line else "") + word
+                if c.stringWidth(test_line, footer_font, footer_font_size) <= footer_width:
+                    current_line = test_line
+                else:
+                    if current_line:
+                        lines.append(current_line)
+                    current_line = word
+            if current_line:
+                lines.append(current_line)
+            
+            # Draw footer lines
+            for i, line in enumerate(lines):
+                y_pos = footer_y - (i * (footer_font_size + 2))
+                c.drawString(self.margin_left, y_pos, line)
     
     def _build_pdf(self, output_path: Path, figs_dir: Path) -> str:
         """
@@ -1351,13 +1485,15 @@ class EquityReportGenerator:
         # Now add left column content to frame (this handles automatic page breaks and creates new pages as needed)
         frame_left.addFromList(left_story, c)
         
+        # Prepare footer variables (needed for all pages)
+        footer_font_family = self.footer_config.get('font_family', 'Roboto')
+        footer_font_size = self.footer_config.get('font_size_pt', 7)
+        footer_color_hex = self.footer_config.get('color', '#7A7A7A')
+        footer_color = HexColor(footer_color_hex)
+        footer_font = self._get_font_name(footer_font_family, self.font_secondary_fallbacks)
+        
         # Draw footer from config - full width footnote at bottom of page
         if self.footer_config.get('show', True):
-            footer_font_family = self.footer_config.get('font_family', 'Roboto')
-            footer_font_size = self.footer_config.get('font_size_pt', 7)
-            footer_color_hex = self.footer_config.get('color', '#7A7A7A')
-            footer_color = HexColor(footer_color_hex)
-            footer_font = self._get_font_name(footer_font_family, self.font_secondary_fallbacks)
             
             # New footer text - full width footnote spanning both columns (BLACK text)
             footer_text = (
@@ -1422,6 +1558,225 @@ class EquityReportGenerator:
             # Right text from config template (website)
             right_text = f'www.{self.brand_name.lower().replace(" ", "")}markets.com'
             c.drawRightString(self.page_width - self.margin_right, brand_y, right_text)
+        
+        # Add Page 2: Two-column layout
+        # Left column: Income Statement, Balance Sheet, Cash Flow Statement (top to bottom)
+        # Right column: Summary Investment Thesis and Valuation (top), Key Metrics (bottom)
+        c.showPage()
+        
+        # Draw header and footer for page 2
+        self._draw_page_header_footer(
+            c, logo_path_obj, header_font, header_font_size,
+            header_color, right_text_color, report_date_color,
+            report_date_str, right_text, footer_font, footer_font_size, footer_color
+        )
+        
+        # Calculate two-column layout (similar widths)
+        header_reserve = 95 / 3
+        gutter_in = self.layout.get('page', {}).get('grid', {}).get('gutter_in', 0.35)
+        gutter_pts = gutter_in * 72 * (2/3)
+        available_width = self.page_width - self.margin_left - self.margin_right - gutter_pts
+        left_col_width = available_width / 2
+        right_col_width = available_width / 2
+        right_col_x = self.margin_left + left_col_width + gutter_pts
+        content_start_y = self.page_height - self.margin_top - header_reserve - 20
+        
+        # LEFT COLUMN: Income Statement, Balance Sheet, Cash Flow Statement
+        left_y = content_start_y
+        
+        # Income Statement (top of left column)
+        income_statement_path = self.fig_paths.get('income_statement_table')
+        if income_statement_path:
+            income_statement_path_obj = Path(income_statement_path)
+            if not income_statement_path_obj.exists():
+                income_statement_path_obj = figs_dir / 'table_income_statement.png'
+            
+            if income_statement_path_obj.exists():
+                try:
+                    income_title = self._draw_frame_title(
+                        "Income Statement",
+                        self.color_light_grey,
+                        left_col_width,
+                        body_font
+                    )
+                    title_width, title_height = income_title.wrap(0, 0)
+                    left_y -= title_height + 5
+                    income_title.drawOn(c, self.margin_left, left_y)
+                    left_y -= 5
+                    
+                    img = Image(str(income_statement_path_obj))
+                    raw_width = img.imageWidth
+                    raw_height = img.imageHeight
+                    img.drawWidth = left_col_width
+                    img.drawHeight = left_col_width * (raw_height / raw_width)
+                    
+                    if left_y - img.drawHeight > self.margin_bottom + 20:
+                        img.drawOn(c, self.margin_left, left_y - img.drawHeight)
+                        left_y -= img.drawHeight + 15
+                except Exception as e:
+                    print(f"Warning: Could not add income statement: {e}")
+        
+        # Balance Sheet (middle of left column)
+        balance_sheet_path = self.fig_paths.get('balance_sheet_table')
+        if balance_sheet_path:
+            balance_sheet_path_obj = Path(balance_sheet_path)
+            if not balance_sheet_path_obj.exists():
+                balance_sheet_path_obj = figs_dir / 'table_balance_sheet.png'
+            
+            if balance_sheet_path_obj.exists():
+                try:
+                    balance_title = self._draw_frame_title(
+                        "Balance Sheet",
+                        self.color_light_grey,
+                        left_col_width,
+                        body_font
+                    )
+                    title_width, title_height = balance_title.wrap(0, 0)
+                    left_y -= title_height + 5
+                    balance_title.drawOn(c, self.margin_left, left_y)
+                    left_y -= 5
+                    
+                    img = Image(str(balance_sheet_path_obj))
+                    raw_width = img.imageWidth
+                    raw_height = img.imageHeight
+                    img.drawWidth = left_col_width
+                    img.drawHeight = left_col_width * (raw_height / raw_width)
+                    
+                    if left_y - img.drawHeight > self.margin_bottom + 20:
+                        img.drawOn(c, self.margin_left, left_y - img.drawHeight)
+                        left_y -= img.drawHeight + 15
+                except Exception as e:
+                    print(f"Warning: Could not add balance sheet: {e}")
+        
+        # Cash Flow Statement (bottom of left column)
+        cash_flow_path = self.fig_paths.get('cash_flow_table')
+        if cash_flow_path:
+            cash_flow_path_obj = Path(cash_flow_path)
+            if not cash_flow_path_obj.exists():
+                cash_flow_path_obj = figs_dir / 'table_cash_flow_statement.png'
+            
+            if cash_flow_path_obj.exists():
+                try:
+                    cash_flow_title = self._draw_frame_title(
+                        "Cash Flow Statement",
+                        self.color_light_grey,
+                        left_col_width,
+                        body_font
+                    )
+                    title_width, title_height = cash_flow_title.wrap(0, 0)
+                    left_y -= title_height + 5
+                    cash_flow_title.drawOn(c, self.margin_left, left_y)
+                    left_y -= 5
+                    
+                    img = Image(str(cash_flow_path_obj))
+                    raw_width = img.imageWidth
+                    raw_height = img.imageHeight
+                    img.drawWidth = left_col_width
+                    img.drawHeight = left_col_width * (raw_height / raw_width)
+                    
+                    if left_y - img.drawHeight > self.margin_bottom + 20:
+                        img.drawOn(c, self.margin_left, left_y - img.drawHeight)
+                except Exception as e:
+                    print(f"Warning: Could not add cash flow statement: {e}")
+        
+        # RIGHT COLUMN: Summary Investment Thesis and Valuation (top), Key Metrics (bottom)
+        right_y = content_start_y
+        
+        # Summary Investment Thesis and Valuation (top of right column)
+        summary_title = self._draw_frame_title(
+            "Summary Investment Thesis and Valuation",
+            self.color_light_grey,
+            right_col_width,
+            body_font
+        )
+        title_width, title_height = summary_title.wrap(0, 0)
+        right_y -= title_height + 5
+        summary_title.drawOn(c, right_col_x, right_y)
+        right_y -= 10
+        
+        # Add placeholder text (300 words)
+        placeholder_text = (
+            "This section provides a comprehensive investment thesis and valuation analysis for the company. "
+            "The investment thesis outlines the key reasons why this stock presents an attractive investment opportunity, "
+            "considering factors such as market position, competitive advantages, growth prospects, and financial strength. "
+            "The valuation analysis employs multiple methodologies including discounted cash flow (DCF) analysis, "
+            "comparable company analysis, and precedent transactions to determine the fair value of the equity. "
+            "Key valuation metrics such as price-to-earnings ratio, enterprise value to EBITDA, and price-to-book ratio "
+            "are evaluated relative to industry peers and historical averages. The analysis considers both upside scenarios "
+            "and downside risks, providing a balanced assessment of the investment opportunity. Based on the comprehensive "
+            "analysis, a target price and investment recommendation are provided, along with key catalysts that could drive "
+            "share price performance over the investment horizon."
+        )
+        
+        # Prepare text style for summary
+        body_config = self.typography.get('scale', {}).get('body', {})
+        summary_style = ParagraphStyle(
+            'SummaryText',
+            parent=styles['Normal'],
+            fontSize=body_config.get('font_size_pt', 9),
+            textColor=HexColor(body_config.get('color', '#111111')),
+            fontName=self._get_font_name(body_config.get('font_family', self.font_primary), self.font_primary_fallbacks),
+            spaceAfter=10,
+            alignment=TA_JUSTIFY,
+            leading=body_config.get('font_size_pt', 9) * body_config.get('line_height', 1.35),
+            leftIndent=0,
+            rightIndent=0
+        )
+        
+        # Create a temporary frame for the summary text
+        summary_frame = Frame(
+            x1=right_col_x,
+            y1=self.margin_bottom + 100,  # Leave space for key metrics at bottom
+            width=right_col_width,
+            height=right_y - (self.margin_bottom + 100),
+            showBoundary=0,
+            topPadding=0,
+            leftPadding=4,
+            rightPadding=4
+        )
+        
+        # Create story for summary text
+        summary_story = [Paragraph(placeholder_text, summary_style)]
+        summary_frame.addFromList(summary_story, c)
+        
+        # Key Metrics (bottom of right column)
+        key_metrics_path = self.fig_paths.get('key_metrics_table')
+        if key_metrics_path:
+            key_metrics_path_obj = Path(key_metrics_path)
+            if not key_metrics_path_obj.exists():
+                key_metrics_path_obj = figs_dir / 'table_key_metrics.png'
+            
+            if key_metrics_path_obj.exists():
+                try:
+                    # Calculate space for key metrics (bottom of right column)
+                    key_metrics_bottom_y = self.margin_bottom + 20
+                    
+                    key_metrics_title = self._draw_frame_title(
+                        "Key Metrics",
+                        self.color_light_grey,
+                        right_col_width,
+                        body_font
+                    )
+                    title_width, title_height = key_metrics_title.wrap(0, 0)
+                    key_metrics_y = key_metrics_bottom_y + title_height + 5
+                    key_metrics_title.drawOn(c, right_col_x, key_metrics_y)
+                    key_metrics_y += title_height + 5
+                    
+                    img = Image(str(key_metrics_path_obj))
+                    raw_width = img.imageWidth
+                    raw_height = img.imageHeight
+                    img.drawWidth = right_col_width
+                    img.drawHeight = right_col_width * (raw_height / raw_width)
+                    
+                    # Draw key metrics table above the bottom margin
+                    if key_metrics_y + img.drawHeight < right_y:
+                        img.drawOn(c, right_col_x, key_metrics_y)
+                    else:
+                        print(f"Warning: Not enough space for key metrics on page 2")
+                except Exception as e:
+                    print(f"Warning: Could not add key metrics: {e}")
+                    import traceback
+                    traceback.print_exc()
         
         c.save()
         

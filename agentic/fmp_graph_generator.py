@@ -1088,9 +1088,41 @@ def plot_company_metrics(
 
 def get_actual_and_forecast_years(ticker: str, db_path: str = None):
     """
-    Helper function to determine actual and forecast years from API data.
+    Helper function to determine actual and forecast years from database data.
     Returns latest_actual_year, year_2_ago, forecast_year_1, forecast_year_2
     """
+    if db_path is None:
+        db_path = str(DEFAULT_DB_PATH)
+    
+    # Try to get actual years from database first
+    try:
+        income_statements = load_financial_statements(ticker, 'income', 'annual', db_path)
+        if income_statements:
+            # Get actual years from database
+            actual_years = []
+            for stmt in income_statements:
+                date_str = stmt.get('date', '')
+                if date_str:
+                    year = date_str[:4]
+                    if year.isdigit():
+                        actual_years.append(year)
+                elif stmt.get('calendarYear'):
+                    year = str(stmt.get('calendarYear'))
+                    if year.isdigit():
+                        actual_years.append(year)
+            
+            if actual_years:
+                actual_years = sorted(list(set(actual_years)), reverse=True, key=int)
+                if len(actual_years) >= 2:
+                    latest_actual = actual_years[0]
+                    year_2_ago = actual_years[1]
+                    forecast_year_1 = str(int(latest_actual) + 1)
+                    forecast_year_2 = str(int(latest_actual) + 2)
+                    return latest_actual, year_2_ago, forecast_year_1, forecast_year_2
+    except Exception as e:
+        print(f"Warning: Could not get years from database: {e}")
+    
+    # Fallback: try API if database doesn't have enough data
     try:
         from agentic.fmp_data_puller import fetch_financial_statements_fmp, FMP_API_KEY
         import os
@@ -1125,7 +1157,7 @@ def get_actual_and_forecast_years(ticker: str, db_path: str = None):
     except:
         pass
     
-    # Fallback
+    # Final fallback
     from datetime import datetime
     current_year = int(datetime.now().strftime('%Y'))
     latest_actual = str(current_year - 1)
