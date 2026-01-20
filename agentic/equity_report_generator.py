@@ -854,14 +854,7 @@ class EquityReportGenerator:
             alignment=TA_LEFT,
             leading=caption_config.get('font_size_pt', 8) * caption_config.get('line_height', 1.25)
         )
-        left_story.append(Spacer(1, 0.1*inch))
-        # Source text with brand name from config
-        source_text = f"Sources for: Style Exposure – {self.brand_name} Quantitative and Derivatives Strategy; all other tables are company data and {self.brand_name} estimates."
-        left_story.append(Paragraph(source_text, source_style))
-        
-        # Disclosure prompt
-        disclosure_text = "See page 11 for analyst certification and important disclosures."
-        left_story.append(Paragraph(disclosure_text, source_style))
+        # Removed source and disclosure text from left column - now in footer
         
         return left_story
     
@@ -1194,13 +1187,18 @@ class EquityReportGenerator:
         c.drawString(right_frame_x + 4, right_y, f"Price Target (Dec-25) ${price_target:.2f}")
         right_y -= 20
         
-        # Sector - use brand colors
-        c.setFont(f'{body_font}-Bold' if body_font == 'Helvetica' else body_font, 9)
-        c.setFillColor(self.color_dark_grey)  # Use dark grey for sector
-        c.drawString(right_frame_x + 4, right_y, "Autos & Auto Parts")
-        right_y -= 15
-        
-        # Analyst contact from config - show all analysts
+        # Sector/Industry - get from config, use same format as Price Performance (with light grey background)
+        industry = self.config.get('inputs', {}).get('source_report', {}).get('industry', 'N/A')
+        sector_title = self._draw_frame_title(
+            industry,
+            self.color_light_grey,  # Light grey background from config (same as Price Performance)
+            right_frame_width - 4,
+            body_font
+        )
+        title_width, title_height = sector_title.wrap(0, 0)
+        right_y -= title_height + 3  # Reduced spacing (same as Price Performance)
+        sector_title.drawOn(c, right_frame_x + 2, right_y)
+        right_y -= 15  # Increased spacing after industry title to avoid overlap with analyst names
         author_section = self.config.get('inputs', {}).get('author_section', {})
         analysts = author_section.get('analysts', [])
         
@@ -1353,7 +1351,7 @@ class EquityReportGenerator:
         # Now add left column content to frame (this handles automatic page breaks and creates new pages as needed)
         frame_left.addFromList(left_story, c)
         
-        # Draw footer from config
+        # Draw footer from config - full width footnote at bottom of page
         if self.footer_config.get('show', True):
             footer_font_family = self.footer_config.get('font_family', 'Roboto')
             footer_font_size = self.footer_config.get('font_size_pt', 7)
@@ -1361,19 +1359,69 @@ class EquityReportGenerator:
             footer_color = HexColor(footer_color_hex)
             footer_font = self._get_font_name(footer_font_family, self.font_secondary_fallbacks)
             
+            # New footer text - full width footnote spanning both columns (BLACK text)
+            footer_text = (
+                "See following pages for analyst certification and important disclosures. "
+                f"{self.brand_name} and its affiliates may seek to conduct business with the companies discussed in this research report. "
+                "As a result, investors should be aware that potential conflicts of interest may exist that could influence the objectivity of the analysis. "
+                "This report is intended for informational purposes only and should be considered as one input among many when making investment decisions, rather than as a sole basis for action."
+            )
+            
+            # Calculate footer position - at the very bottom of the page
+            footer_y = self.margin_bottom - 5  # 5 points from bottom edge
+            
+            # Split footer text into multiple lines to fit page width
+            # Available width spans from left column left edge to right column right edge
+            # Use full page width minus margins (full width)
+            footer_width = self.page_width - self.margin_left - self.margin_right
+            
+            # Use ReportLab's stringWidth for accurate text width calculation
+            from reportlab.pdfbase.pdfmetrics import stringWidth
+            footer_lines = []
+            
+            # Word wrapping with accurate width calculation
+            words = footer_text.split()
+            current_line = ""
+            for word in words:
+                test_line = current_line + (" " if current_line else "") + word
+                # Use ReportLab's stringWidth for accurate measurement
+                text_width = stringWidth(test_line, footer_font, footer_font_size)
+                if text_width > footer_width and current_line:
+                    footer_lines.append(current_line)
+                    current_line = word
+                else:
+                    current_line = test_line
+            if current_line:
+                footer_lines.append(current_line)
+            
+            # Draw disclosure text (BLACK) - positioned above brand/website
+            # Use full width from left margin to right margin (spanning both columns)
+            line_height = footer_font_size * 1.2
+            disclosure_height = len(footer_lines) * line_height
+            disclosure_start_y = footer_y + line_height + 5  # Start above brand/website (5 points spacing)
+            
             c.setFont(footer_font, footer_font_size)
-            c.setFillColor(footer_color)
+            c.setFillColor(HexColor('#111111'))  # Black color for disclosure text
+            for i, line in enumerate(reversed(footer_lines)):
+                y_pos = disclosure_start_y + (i * line_height)
+                # Draw from left margin to right margin (full width)
+                c.drawString(self.margin_left, y_pos, line)
+            
+            # Add brand name and website at the very bottom (GRAY, like original)
+            # Position: at the bottom of the page
+            brand_y = footer_y  # At the very bottom
+            
+            c.setFont(footer_font, footer_font_size)
+            c.setFillColor(footer_color)  # Gray color for brand/website (original color)
             
             # Left text from config template
             left_text_template = self.footer_config.get('left_text_template', '{provider} Research')
             left_text = left_text_template.format(provider=self.brand_name)
-            c.drawString(self.margin_left, self.margin_bottom - 15, left_text[:80])
+            c.drawString(self.margin_left, brand_y, left_text[:80])
             
-            # Right text from config template (page number or URL)
-            right_text_template = self.footer_config.get('right_text_template', '{page_number}')
-            # For now, use a simple URL - page numbers would need page tracking
+            # Right text from config template (website)
             right_text = f'www.{self.brand_name.lower().replace(" ", "")}markets.com'
-            c.drawRightString(self.page_width - self.margin_right, self.margin_bottom - 15, right_text)
+            c.drawRightString(self.page_width - self.margin_right, brand_y, right_text)
         
         c.save()
         

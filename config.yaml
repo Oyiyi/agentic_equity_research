@@ -8,6 +8,7 @@ inputs:
     file: "Modified-TSLA-Report 2.pdf"
     report_date: "2026-01-10"
     ticker: "TSLA"
+    industry: "Autos & Auto Parts"  # Industry sector for the company
 
   analyst_analysis:
     # Analysis paragraph configuration
@@ -261,13 +262,13 @@ components:
     series:
       stock:
         name: "Stock"
-        color: "#9E1F00"      # Red for stock line
+        color: "#1F77B4"      # Blue for stock line
         linestyle: "-"
         linewidth: 3
       
       benchmark:
         name: "Benchmark / Index"
-        color: "#1F77B4"      # MS-style blue for benchmark/index
+        color: "#D4A32F"      # Golden yellow for benchmark/index
         linestyle: "-"
         linewidth: 2.2
 
