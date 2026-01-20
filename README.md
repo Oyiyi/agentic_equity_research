@@ -1,108 +1,133 @@
-# FinRpt: Dataset, Evaluation System and LLM-based Multi-agent Framework for Equity Research Report Generation
+# Equity Research Report Generator
 
-<div align="center">
-  
-  <a href="https://arxiv.org/abs/2511.07322">
-    <img src="https://img.shields.io/badge/ArXiv-FinRpt-brown?logo=arxiv" alt="Paper">
-  </a>
-  
-  <a href="https://huggingface.co/datasets/jinsong8/FinRpt">
-    <img src="https://img.shields.io/badge/🤗 huggingface-Dataset-blue" alt="dataset">
-  </a>
-  
-</div>
-
->While LLMs have shown great success in financial tasks like stock prediction and question answering, their application in fully automating Equity Research Report generation remains uncharted territory. In this paper, we formulate the Equity Research Report (ERR) Generation task for the first time. To address the data scarcity and the evaluation metrics absence, we present an open-source evaluation benchmark for ERR generation - FinRpt. We frame a Dataset Construction Pipeline that integrates 7 financial data types and produces a high-quality ERR dataset automatically, which could be used for model training and evaluation. We also introduce a comprehensive evaluation system including 11 metrics to assess the generated ERRs. Moreover, we propose a multi-agent framework specifically tailored to address this task, named FinRpt-Gen, and train several LLM-based agents on the proposed datasets using Supervised Fine-Tuning and Reinforcement Learning. Experimental results indicate the data quality and metrics effectiveness of the benchmark FinRpt and the strong performance of FinRpt-Gen, showcasing their potential to drive innovation in the ERR generation field. All code and datasets are publicly available. 
-
+A comprehensive system for automated equity research report generation using multi-agent LLM frameworks. This project provides tools for data collection, financial analysis, and professional equity research report generation.
 
 ## 🕹️ Environment Setup
 
 1. Create a new virtual environment
+```bash
+conda create --name equity_research python=3.10
+conda activate equity_research
 ```
-conda create --name finrpt python=3.10
-conda activate finrpt
-```
-2. Install requirement packages
 
-```
+2. Install requirement packages
+```bash
 pip install -r requirements.txt
 ```
+
 3. Add Python environment variables
-```
+```bash
 export PYTHONPATH="${PYTHONPATH}:<path_to_this_repo>"
 ```
 
+4. Configure API keys
+   - Set up your Financial Modeling Prep (FMP) API key in `config.yaml`
+   - Configure OpenAI API key if using OpenAI models
 
-## 🔧 Structure
+## 🔧 Project Structure
 
-### Dataset Construction Pipeline
-<div align="center">
-<img align="center" src="assets/pipeline.png" width="90%"/>
-</div>
+### Agentic Framework (`agentic/`)
+Multi-agent system for equity report generation:
+- `equity_report_generator.py` - Main report generation orchestrator
+- `analyst_agent.py` - Financial analysis agent
+- `financial_forecastor_agent.py` - Financial forecasting agent
+- `news_collector.py` - News collection and analysis agent
+- `fmp_data_puller.py` - Financial data collection from FMP API
+- `fmp_graph_generator.py` - Financial charts and tables generation
+- `run_equity_report.py` - Main entry point for report generation
 
-The corresponding code is in
-```
-FinRpt/dataset
-```
+### Dataset Processing (`dataset/`)
+Tools for processing and managing equity research datasets:
+- Data alignment and processing
+- Report generation and filtering
+- Statistics and validation utilities
 
-### Data Collection Module
+### Core Modules (`finrpt/module/`)
+Core analysis and report generation modules:
+- `FinancialsAnalyzer.py` - Financial statement analysis
+- `NewsAnalyzer.py` - News sentiment and analysis
+- `Predictor.py` - Financial predictions
+- `RiskAssessor.py` - Risk assessment
+- `ReportBuild.py` - Report building utilities
 
-The corresponding code is in
-```
-FinRpt/finrpt/source
-```
+### Data Source (`finrpt/source/`)
+Data collection and caching infrastructure:
+- Database initialization and management
+- Data insertion and querying
+- Caching mechanisms for API data
 
-### FinRpt Framework
-<div align="center">
-<img align="center" src="assets/agent.png" width="35.92%"/>
-</div>
+### Frontend (`front/`)
+Web interface for report generation:
+- Flask-based web application
+- Interactive report generation interface
 
-The corresponding code is in
-```
-FinRpt/finrpt/module
-```
+## 🚀 Quick Start
 
-### Benchmark Evaluation
+### Generate an Equity Research Report
 
-The corresponding code is in
-```
-FinRpt/finrpt/benchmark
-```
-
-### Fine-tuning LLMs
-
-We use LLaMA-Factory repo to fine-tune LLMs. 
-
-The corresponding code is in
-
-```
-FinRpt/finetune/LLaMA-Factory
-```
-
-###  Reinforcement Learning
-We use [verl](https://github.com/volcengine/verl) source code for reinforcement learning.
-
-### Website front-end code for FinRpt
-
-You can use the code to build the website for FinRpt and use the website to generate the ERRs conveniently.
-
-The corresponding code is in
-```
-FinRpt/front
+```bash
+python agentic/run_equity_report.py <TICKER> [COMPANY_NAME]
 ```
 
-## 🧩 Generated Report Case
-The report case generated using FinRpt-Gen (translated from Chinese into English).
+Example:
+```bash
+python agentic/run_equity_report.py TSLA "Tesla Inc"
+```
 
-<div align="center">
-<img align="center" src="assets/report.png" width="90%"/>
-</div>
+### Using the Python API
 
-## 🌹 Acknowledgmentsons
+```python
+from agentic.equity_report_generator import EquityReportGenerator
 
-This project use [LLaMA-Factory](https://github.com/hiyouga/LLaMA-Factory) for mdoels fine-tuning, [verl](https://github.com/volcengine/verl) for reinforcement learning, and [ReportLab](https://www.reportlab.com/) for PDF report generation. Special thanks for providing the foundation for this work.
+generator = EquityReportGenerator(
+    ticker="TSLA",
+    company_name="Tesla Inc"
+)
+
+output_path = generator.generate_report()
+print(f"Report saved to: {output_path}")
+```
+
+## 📊 Features
+
+- **Multi-Agent Framework**: Specialized agents for different aspects of equity analysis
+- **Financial Data Integration**: Automated collection of financial statements, key metrics, and market data
+- **News Analysis**: Integration of news sentiment and analysis
+- **Financial Forecasting**: Automated financial projections and forecasts
+- **Professional Report Generation**: PDF reports with charts, tables, and comprehensive analysis
+- **Data Caching**: Efficient caching system to minimize API calls
+
+## 🔑 Key Components
+
+### Data Collection
+- Financial statements (Income Statement, Balance Sheet, Cash Flow)
+- Key financial metrics and ratios
+- Price performance data
+- Company information and analyst ratings
+- News articles and sentiment analysis
+
+### Report Generation
+- Executive summary
+- Company overview
+- Financial analysis
+- Risk assessment
+- Investment recommendations
+- Professional formatting with charts and tables
+
+## 🌹 Acknowledgments
+
+This project uses:
+- [LLaMA-Factory](https://github.com/hiyouga/LLaMA-Factory) for model fine-tuning
+- [verl](https://github.com/volcengine/verl) for reinforcement learning
+- [ReportLab](https://www.reportlab.com/) for PDF report generation
+- [Financial Modeling Prep API](https://financialmodelingprep.com/) for financial data
+
+Special thanks to these projects for providing the foundation for this work.
 
 ## 📚 License
+
 MIT License
 
-Disclaimer: We are sharing codes for academic purposes under the MIT education license. Nothing herein is financial advice, and NOT a recommendation to trade real money. Please use common sense and always first consult a professional before trading or investing.
+## ⚠️ Disclaimer
+
+This project is shared for academic and research purposes under the MIT license. Nothing herein constitutes financial advice, and this is NOT a recommendation to trade real money. Please use common sense and always consult a professional financial advisor before making any trading or investment decisions.

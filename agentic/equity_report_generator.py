@@ -229,12 +229,68 @@ class EquityReportGenerator:
         """Load all required data from database and generate analysis."""
         print(f"Loading data for {self.ticker}...")
         
+        # Get report date from config
+        report_date_format = self.config.get('inputs', {}).get('source_report', {}).get('report_date')
+        if report_date_format:
+            try:
+                report_date = datetime.strptime(report_date_format, '%Y-%m-%d')
+                report_date_str = report_date.strftime('%Y-%m-%d')
+            except:
+                report_date = datetime.now()
+                report_date_str = datetime.now().strftime('%Y-%m-%d')
+        else:
+            report_date = datetime.now()
+            report_date_str = datetime.now().strftime('%Y-%m-%d')
+        
         # Load financial data
         self.financial_data = load_all_data_from_cache(self.ticker, self.db_path)
         
-        # Load company data
-        as_of_date = datetime.now().strftime('%Y-%m-%d')
-        self.company_data = load_company_data(self.ticker, as_of_date, self.db_path)
+        # Load company data for report date (will pull from API if not in cache)
+        self.company_data = load_company_data(self.ticker, report_date_str, self.db_path)
+        
+        # If company_data not found in cache, try to pull from API
+        if not self.company_data:
+            print(f"Company data not in cache for {report_date_str}, attempting to pull from API...")
+            from agentic.fmp_data_puller import pull_tesla_data
+            try:
+                result = pull_tesla_data(
+                    ticker=self.ticker,
+                    as_of_date=report_date_str,
+                    end_date=report_date_str,
+                    db_path=self.db_path
+                )
+                if result and result.get('company_data'):
+                    self.company_data = result['company_data']
+                    print("Company data pulled from API and cached")
+            except Exception as e:
+                print(f"Warning: Could not pull company data from API: {e}")
+        
+        # Load price performance data to get price for report date
+        from agentic.fmp_graph_generator import load_price_performance_data
+        from datetime import timedelta
+        # Get price performance data for a range including report date
+        start_date = (report_date - timedelta(days=30)).strftime('%Y-%m-%d')  # 30 days before report date
+        end_date = report_date_str
+        self.price_performance = load_price_performance_data(
+            self.ticker, start_date, end_date, self.db_path
+        )
+        
+        # If price_performance not in cache, try to pull from API
+        if not self.price_performance:
+            print(f"Price performance not in cache for {report_date_str}, attempting to pull from API...")
+            from agentic.fmp_data_puller import pull_tesla_data
+            try:
+                result = pull_tesla_data(
+                    ticker=self.ticker,
+                    start_date=start_date,
+                    end_date=end_date,
+                    db_path=self.db_path
+                )
+                if result and result.get('price_performance'):
+                    self.price_performance = result['price_performance']
+                    print("Price performance pulled from API and cached")
+            except Exception as e:
+                print(f"Warning: Could not pull price performance from API: {e}")
         
         # Load key metrics
         self.key_metrics = load_key_metrics(self.ticker, self.db_path)
@@ -811,83 +867,33 @@ class EquityReportGenerator:
     
     def _highlight_financial_keywords(self, text: str) -> str:
         """
-        Highlight financial keywords and metrics in text by wrapping them in blue font tags.
+        Convert LLM-generated <highlight> tags to blue font tags.
         
-        This function identifies financial metrics and key terms (like EBITDA margin, 
-        revenue growth, EPS, ROE, etc.) and highlights them in blue.
+        The LLM should mark important financial metrics and insights using <highlight> tags
+        in the generated text. This method converts those tags to blue HTML font tags.
+        No regex pattern matching is used - all highlighting is done by the LLM during generation.
         
         Args:
-            text: Input text to process
+            text: Input text with <highlight> tags from LLM
             
         Returns:
-            Text with financial keywords highlighted in blue HTML tags
+            Text with <highlight> tags converted to blue HTML font tags
         """
         import re
         
         # Primary color for highlighting
         highlight_color = self.brand_colors.get("primary", {}).get("hex", "#0060A0")
         
-        # Patterns to match financial metrics and keywords
-        # Pattern 1: Financial metrics with numbers (e.g., "EBITDA margin of 15.1%", "revenue growth of 0.9%")
-        patterns = [
-            # EBITDA margin patterns
-            (r'\b(EBITDA\s+margin\s+of\s+[\d.]+%)', 'EBITDA margin'),
-            (r'\b(EBITDA\s+margin\s+[\d.]+%)', 'EBITDA margin'),
-            # Revenue patterns
-            (r'\b(revenue\s+growth\s+of\s+[\d.]+%\s+YoY)', 'revenue growth'),
-            (r'\b(revenue\s+growth\s+rate\s+of\s+[\d.]+%)', 'revenue growth'),
-            (r'\b(revenue\s+[\d.]+%)', 'revenue'),
-            # EPS patterns
-            (r'\b(EPS\s+has\s+been\s+stable\s+at\s+around\s+\$?[\d.]+)', 'EPS'),
-            (r'\b(adjusted\s+EPS\s+has\s+been\s+stable\s+at\s+around\s+\$?[\d.]+)', 'EPS'),
-            (r'\b(EPS\s+of\s+\$?[\d.]+)', 'EPS'),
-            # ROE/ROCE patterns
-            (r'\b(ROE\s+and\s+ROCE\s+have\s+also\s+remained\s+constant\s+at\s+[\d.]+%\s+and\s+[\d.]+%)', 'ROE/ROCE'),
-            (r'\b(ROE\s+of\s+[\d.]+%)', 'ROE'),
-            (r'\b(ROCE\s+of\s+[\d.]+%)', 'ROCE'),
-            # Margin patterns
-            (r'\b(net\s+margin\s+of\s+around\s+[\d.]+%)', 'net margin'),
-            (r'\b(operating\s+margin\s+of\s+[\d.]+%)', 'operating margin'),
-            (r'\b(gross\s+margin\s+of\s+[\d.]+%)', 'gross margin'),
-            # Growth patterns
-            (r'\b(growth\s+rate\s+of\s+[\d.]+%)', 'growth rate'),
-            (r'\b(YoY\s+growth\s+of\s+[\d.]+%)', 'YoY growth'),
-            # Price patterns
-            (r'\b(price\s+target\s+of\s+\$[\d.]+)', 'price target'),
-            (r'\b(share\s+price\s+of\s+\$[\d.]+)', 'share price'),
-            # Other financial terms
-            (r'\b(P/E\s+ratio\s+of\s+[\d.]+)', 'P/E ratio'),
-            (r'\b(price-to-book\s+of\s+[\d.]+)', 'price-to-book'),
-        ]
-        
-        # Also check for LLM-marked highlights (if LLM uses <highlight> tags)
-        # This allows LLM to explicitly mark what should be highlighted
+        # Replace LLM highlight tags with blue font tags
+        # LLM should use <highlight>text to highlight</highlight> format
+        # No regex pattern matching - all highlighting is done by the LLM during generation
         if '<highlight>' in text and '</highlight>' in text:
-            # Replace LLM highlight tags with blue font tags
             text = re.sub(
                 r'<highlight>(.*?)</highlight>',
                 f'<font color="{highlight_color}">\\1</font>',
                 text,
                 flags=re.IGNORECASE | re.DOTALL
             )
-        
-        # Apply pattern-based highlighting (only if not already highlighted)
-        # We need to be careful not to double-highlight
-        for pattern, _ in patterns:
-            # Find all matches
-            matches = list(re.finditer(pattern, text, re.IGNORECASE))
-            # Process from end to start to preserve indices
-            for match in reversed(matches):
-                matched_text = match.group(1)
-                # Check if already highlighted
-                start, end = match.span(1)
-                # Check if this range is already inside a font tag
-                before = text[:start]
-                after = text[end:]
-                if '<font color=' not in before[-100:] or '</font>' not in after[:100]:
-                    # Not already highlighted, add highlight
-                    highlighted = f'<font color="{highlight_color}">{matched_text}</font>'
-                    text = text[:start] + highlighted + text[end:]
         
         return text
     
@@ -1129,13 +1135,61 @@ class EquityReportGenerator:
         c.drawString(right_frame_x + 4, right_y, f"{self.ticker}, {self.ticker} US")
         right_y -= 12
         
-        if self.company_data:
-            current_price = self.company_data.get('52w_high', 0) * 0.8 if self.company_data.get('52w_high') else 100
+        # Get report date from config
+        report_date_format = self.config.get('inputs', {}).get('source_report', {}).get('report_date')
+        if report_date_format:
+            try:
+                report_date = datetime.strptime(report_date_format, '%Y-%m-%d')
+                report_date_str = report_date.strftime('%d %b %y')
+            except:
+                report_date = datetime.now()
+                report_date_str = datetime.now().strftime('%d %b %y')
         else:
-            current_price = 100
+            report_date = datetime.now()
+            report_date_str = datetime.now().strftime('%d %b %y')
+        
+        # Get current price from price_performance data (for report date) or company_data
+        current_price = None
+        
+        # Try to get price from price_performance data (most accurate for specific date)
+        if hasattr(self, 'price_performance') and self.price_performance:
+            stock_data = self.price_performance.get('stock_data', [])
+            if stock_data:
+                # Find price closest to report date
+                report_date_str_for_match = report_date.strftime('%Y-%m-%d')
+                # Try exact match first
+                for data_point in stock_data:
+                    if data_point.get('date') == report_date_str_for_match:
+                        current_price = data_point.get('close')
+                        break
+                # If exact match not found, use the latest price before or on report date
+                if current_price is None:
+                    sorted_data = sorted(
+                        [d for d in stock_data if d.get('date', '') <= report_date_str_for_match],
+                        key=lambda x: x.get('date', ''),
+                        reverse=True
+                    )
+                    if sorted_data:
+                        current_price = sorted_data[0].get('close')
+        
+        # Fallback: try to get from company_data (market_cap / shares_outstanding)
+        if current_price is None and self.company_data:
+            market_cap = self.company_data.get('market_cap')
+            shares_outstanding = self.company_data.get('shares_outstanding')
+            if market_cap and shares_outstanding and shares_outstanding > 0:
+                current_price = market_cap / shares_outstanding
+        
+        # Final fallback: use 52w_high * 0.8 as estimate
+        if current_price is None:
+            if self.company_data and self.company_data.get('52w_high'):
+                current_price = self.company_data.get('52w_high', 0) * 0.8
+            else:
+                current_price = 100
+        
+        # Price target (can be improved later with actual analyst target)
         price_target = current_price * 0.7
         
-        c.drawString(right_frame_x + 4, right_y, f"Price ({datetime.now().strftime('%d %b %y')}) ${current_price:.2f}")
+        c.drawString(right_frame_x + 4, right_y, f"Price ({report_date_str}) ${current_price:.2f}")
         right_y -= 12
         c.drawString(right_frame_x + 4, right_y, f"Price Target (Dec-25) ${price_target:.2f}")
         right_y -= 20

@@ -399,6 +399,18 @@ Always base your recommendations on fundamental analysis, not speculation."""
         prompt_parts.append(f"   - Target length: 8-15 words per key point (1.5-2x longer than short phrases)")
         prompt_parts.append(f"   - These will be used to generate the report headline, so they should be descriptive and meaningful")
         
+        # Add highlighting instructions
+        prompt_parts.append("\n4. Text Highlighting:")
+        prompt_parts.append("   - In your analysis paragraphs, wrap important financial metrics, key numbers, and")
+        prompt_parts.append("     critical insights with <highlight> tags.")
+        prompt_parts.append("   - Examples of what to highlight:")
+        prompt_parts.append("     * Financial metrics with numbers: 'EBITDA margin of 15.1%', 'revenue growth of 0.9% YoY'")
+        prompt_parts.append("     * Key performance indicators: 'EPS of $2.50', 'ROE of 18.5%'")
+        prompt_parts.append("     * Important trends: 'sluggish revenue growth', 'stable margins'")
+        prompt_parts.append("     * Critical numbers: 'net income of $500M', 'price target of $150'")
+        prompt_parts.append("   - Format: <highlight>text to highlight</highlight>")
+        prompt_parts.append("   - Highlight 3-5 key phrases per paragraph that are most important for investors.")
+        
         prompt_parts.append("\nReturn your response as a JSON object with the following structure:")
         
         # Build JSON structure dynamically based on num_paragraphs and key_points_num
@@ -415,6 +427,7 @@ Always base your recommendations on fundamental analysis, not speculation."""
 }}"""
         prompt_parts.append(json_structure)
         prompt_parts.append("\nImportant: Return ONLY valid JSON, no additional text or explanation.")
+        prompt_parts.append("Remember: Use <highlight> tags in your paragraph text to mark important financial metrics and insights.")
         
         return "\n".join(prompt_parts)
     

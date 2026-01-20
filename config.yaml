@@ -6,19 +6,19 @@ inputs:
     provider: "Morgan Stanley"
     type: "equity_research_pdf"
     file: "Modified-TSLA-Report 2.pdf"
-    report_date: "2025-01-30"
+    report_date: "2026-01-10"
     ticker: "TSLA"
 
   analyst_analysis:
     # Analysis paragraph configuration
     num_paragraphs: 4  # Number of analysis paragraphs (changed from 3 to 4)
     paragraph_length:
-      min_words_per_paragraph: 60  # Minimum words per paragraph
-      max_words_per_paragraph: 100  # Maximum words per paragraph
-      target_words_per_paragraph: 80  # Target words per paragraph
-      min_chars_per_paragraph: 400  # Minimum characters per paragraph
-      max_chars_per_paragraph: 600  # Maximum characters per paragraph
-      target_chars_per_paragraph: 500  # Target characters per paragraph
+      min_words_per_paragraph: 72  # Minimum words per paragraph (60 * 1.2)
+      max_words_per_paragraph: 120  # Maximum words per paragraph (100 * 1.2)
+      target_words_per_paragraph: 96  # Target words per paragraph (80 * 1.2)
+      min_chars_per_paragraph: 480  # Minimum characters per paragraph (400 * 1.2)
+      max_chars_per_paragraph: 720  # Maximum characters per paragraph (600 * 1.2)
+      target_chars_per_paragraph: 600  # Target characters per paragraph (500 * 1.2)
     paragraph_topics:
       - "Context and key observations about recent performance/events"
       - "Deep dive into financial fundamentals and trends"
@@ -259,9 +259,15 @@ components:
       text_secondary: "#666666"
 
     series:
+      stock:
+        name: "Stock"
+        color: "#9E1F00"      # Red for stock line
+        linestyle: "-"
+        linewidth: 3
+      
       benchmark:
         name: "Benchmark / Index"
-        color: "#1F77B4"      # MS-style blue
+        color: "#1F77B4"      # MS-style blue for benchmark/index
         linestyle: "-"
         linewidth: 2.2
 
